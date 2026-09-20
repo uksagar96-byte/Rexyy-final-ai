@@ -32,5 +32,6 @@ data class ChatUiState(
     val isListening: Boolean = false,
     val lastActionFeedback: String? = null,
     val pendingConfirmation: ConfirmationRequest? = null,
+    val pendingMessageTarget: Pair<String, Boolean>? = null, // targetName to isWhatsApp
     val activeTaskPlan: TaskPlan? = null
 )

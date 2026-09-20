@@ -176,7 +176,19 @@ class ChatViewModel(
         val trimmed = input.trim()
         val lower = trimmed.lowercase()
 
-        // 1. Check if user is answering an active confirmation prompt
+        // 1. Check if user is answering an active confirmation prompt or providing message body
+        if (_uiState.value.pendingMessageTarget != null) {
+            val (target, isWhatsApp) = _uiState.value.pendingMessageTarget!!
+            _uiState.update { it.copy(pendingMessageTarget = null) }
+            val nextCmd = if (isWhatsApp) {
+                VoiceCommand.WhatsAppMessage(target = target, body = trimmed, rawInput = trimmed)
+            } else {
+                VoiceCommand.SendMessage(target = target, body = trimmed, rawInput = trimmed)
+            }
+            executeLocalDeviceCommand(nextCmd, trimmed, isVoice)
+            return
+        }
+
         if (confirmationManager.hasPending()) {
             val isAffirmative = lower in listOf("yes", "haan", "ha", "confirm", "send", "call", "bhejo", "karo", "sure", "ok", "yep", "do it")
             val isNegative = lower in listOf("no", "nahi", "cancel", "mat karo", "stop", "nevermind", "nah", "abort")
@@ -299,7 +311,8 @@ class ChatViewModel(
                             inputText = "",
                             voiceState = if (isVoice && it.isVoiceRepliesEnabled) VoiceState.SPEAKING else VoiceState.IDLE,
                             voiceStatusMessage = null,
-                            lastActionFeedback = result.prompt
+                            lastActionFeedback = result.prompt,
+                            pendingMessageTarget = Pair(result.targetName, result.isWhatsApp)
                         )
                     }
                     if (isVoice && _uiState.value.isVoiceRepliesEnabled) {

@@ -64,16 +64,22 @@ class CallStateManager(private val context: Context) {
         } catch (_: Exception) {}
     }
 
-    fun getCurrentRingingCallerAnnouncement(): String {
+    fun getCurrentRingingCallerAnnouncement(languageSetting: String = com.rexyy.app.data.local.SecureStorage.VOICE_LANG_DEFAULT): String {
         val current = _callStatus.value
+        val appLang = com.rexyy.app.utils.RexyyLanguageManager.parseLanguage(languageSetting)
         return if (current.state == TelephonyState.RINGING) {
-            when {
-                !current.callerName.isNullOrBlank() -> "Incoming call from ${current.callerName}."
-                !current.phoneNumber.isNullOrBlank() -> "Incoming call from ${current.phoneNumber}."
-                else -> "Incoming call from an unknown number."
+            val caller = when {
+                !current.callerName.isNullOrBlank() -> current.callerName
+                !current.phoneNumber.isNullOrBlank() -> current.phoneNumber
+                else -> "Unknown Number"
             }
+            com.rexyy.app.utils.RexyyLanguageManager.getIncomingCallAnnouncement(caller, appLang)
         } else {
-            "No active incoming call detected."
+            when (appLang) {
+                com.rexyy.app.utils.AppLanguage.HINDI -> "कोई इनकमिंग कॉल नहीं है।"
+                com.rexyy.app.utils.AppLanguage.ENGLISH -> "No active incoming call detected."
+                com.rexyy.app.utils.AppLanguage.HINGLISH -> "Koi incoming call nahi hai."
+            }
         }
     }
 

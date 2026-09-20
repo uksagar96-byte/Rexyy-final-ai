@@ -150,13 +150,9 @@ fun MainAssistantScreen(
                             )
                         )
                         Text(
-                            text = when (uiState.selectedProvider) {
-                                AiProviderType.LOCAL_TEST -> "Local Test Mode (Offline)"
-                                AiProviderType.GEMINI -> "Google Gemini • ${uiState.geminiModel}"
-                                AiProviderType.OPENAI -> "OpenAI • ${uiState.openAiModel}"
-                            },
+                            text = if (isListening) "Listening" else "Ready",
                             style = MaterialTheme.typography.labelSmall.copy(
-                                color = RexyyTextMuted
+                                color = if (isListening) RexyyCyanPrimary else RexyyNeonGreen
                             )
                         )
                     }
@@ -210,27 +206,40 @@ fun MainAssistantScreen(
 
                 Spacer(modifier = Modifier.height(20.dp))
 
-                // Status banner
-                Text(
-                    text = when {
-                        uiState.errorMessage != null -> uiState.errorMessage
-                        isListening -> "Listening... Speak your command"
-                        uiState.voiceState == VoiceState.PROCESSING || uiState.isLoading -> "Thinking..."
-                        uiState.voiceState == VoiceState.SPEAKING -> "Speaking reply..."
-                        else -> "Ready for your command, ${uiState.userName}"
-                    },
-                    style = MaterialTheme.typography.titleMedium.copy(
-                        fontWeight = FontWeight.Bold,
-                        color = if (uiState.errorMessage != null) Color(0xFFFF8A80) else if (isListening) RexyyCyanLight else RexyyTextPrimary
-                    ),
-                    textAlign = TextAlign.Center,
-                    modifier = Modifier.padding(horizontal = 16.dp)
-                )
+                // Dynamic Command Pill & Status banner
+                val pillText = when {
+                    uiState.errorMessage != null -> uiState.errorMessage
+                    isListening -> "Listening..."
+                    uiState.voiceStatusMessage != null -> uiState.voiceStatusMessage
+                    uiState.voiceState == VoiceState.PROCESSING || uiState.isLoading -> "Executing..."
+                    uiState.voiceState == VoiceState.SPEAKING -> "Speaking..."
+                    !uiState.lastActionFeedback.isNullOrBlank() -> uiState.lastActionFeedback
+                    else -> "Ready for your command"
+                }
 
-                Spacer(modifier = Modifier.height(4.dp))
+                Box(
+                    modifier = Modifier
+                        .padding(horizontal = 24.dp)
+                        .clip(RoundedCornerShape(24.dp))
+                        .background(RexyyDarkSurfaceVariant)
+                        .border(1.dp, if (isListening) RexyyCyanPrimary else RexyyDarkBorder, RoundedCornerShape(24.dp))
+                        .padding(horizontal = 18.dp, vertical = 10.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(
+                        text = pillText,
+                        style = MaterialTheme.typography.titleSmall.copy(
+                            fontWeight = FontWeight.SemiBold,
+                            color = if (uiState.errorMessage != null) Color(0xFFFF8A80) else if (isListening) RexyyCyanLight else RexyyTextPrimary
+                        ),
+                        textAlign = TextAlign.Center
+                    )
+                }
+
+                Spacer(modifier = Modifier.height(8.dp))
 
                 Text(
-                    text = if (isListening) "Tap the orb to finish speaking" else "Tap orb or hold mic to talk",
+                    text = if (isListening) "Tap the orb to finish speaking" else "Tap orb or hold mic to speak",
                     style = MaterialTheme.typography.bodySmall.copy(
                         color = RexyyTextMuted
                     )

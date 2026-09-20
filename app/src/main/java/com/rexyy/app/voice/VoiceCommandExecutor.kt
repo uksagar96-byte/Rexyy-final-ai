@@ -166,7 +166,8 @@ object VoiceCommandExecutor {
 
     private fun executeCheckCaller(context: Context): VoiceCommandResult {
         val manager = CallStateManager(context)
-        val msg = manager.getCurrentRingingCallerAnnouncement()
+        val voiceLang = com.rexyy.app.data.local.SecureStorage(context).getVoiceLanguage()
+        val msg = manager.getCurrentRingingCallerAnnouncement(voiceLang)
         return VoiceCommandResult.Handled(msg)
     }
 

@@ -282,4 +282,32 @@ class RexyyRobolectricTest {
         // Check method execution without exceptions
         assertNotNull(hasMic)
     }
+
+    @Test
+    fun testWhatsAppCommandParsingAndBodyCollection() {
+        // "Ramzan ko WhatsApp message bhejo" -> Should route to WhatsAppMessage with empty body (requiring body input)
+        val cmd = VoiceCommandParser.parse("Ramzan ko WhatsApp message bhejo")
+        assertTrue(cmd is VoiceCommand.WhatsAppMessage)
+        val waCmd = cmd as VoiceCommand.WhatsAppMessage
+        assertEquals("Ramzan", waCmd.target)
+        assertEquals("", waCmd.body)
+
+        // "send WhatsApp message on Ramzan" -> target is Ramzan, not "on Ramzan"
+        val cmd2 = VoiceCommandParser.parse("send WhatsApp message on Ramzan")
+        assertTrue(cmd2 is VoiceCommand.WhatsAppMessage)
+        val waCmd2 = cmd2 as VoiceCommand.WhatsAppMessage
+        assertEquals("Ramzan", waCmd2.target)
+        assertEquals("", waCmd2.body)
+    }
+
+    @Test
+    fun testTaskPlannerCompoundCommand() {
+        // "Open YouTube and search cricket"
+        val compound = VoiceCommandParser.parse("Open YouTube and search cricket")
+        assertTrue(compound is VoiceCommand.MultiStepTask)
+        val multi = compound as VoiceCommand.MultiStepTask
+        assertEquals(2, multi.steps.size)
+        assertTrue(multi.steps[0] is VoiceCommand.OpenApp)
+        assertTrue(multi.steps[1] is VoiceCommand.GoogleSearch)
+    }
 }
