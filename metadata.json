@@ -1,0 +1,6 @@
+{
+  "name": "REXYY",
+  "description": "REXYY is a native Android AI assistant featuring real-time conversational chat, secure hardware-backed KeyStore API key management, and local Room persistence.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

@@ -1,0 +1,4 @@
+<resources>
+    <string name="app_name">REXYY</string>
+    <string name="accessibility_service_description">Enables REXYY AI Assistant to assist with voice-requested user interactions, search navigation, and automated commands.</string>
+</resources>
