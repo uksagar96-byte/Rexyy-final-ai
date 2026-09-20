@@ -27,9 +27,11 @@ class SecureStorage(
         private const val PREFS_NAME = "rexyy_secure_preferences"
         private const val KEY_ENCRYPTED_API_KEY = "encrypted_api_key"
         private const val KEY_ENCRYPTED_GEMINI_KEY = "encrypted_gemini_key"
+        private const val KEY_ENCRYPTED_OPENROUTER_KEY = "encrypted_openrouter_key"
         private const val KEY_SELECTED_PROVIDER = "selected_ai_provider"
         private const val KEY_SELECTED_MODEL = "selected_model"
         private const val KEY_SELECTED_GEMINI_MODEL = "selected_gemini_model"
+        private const val KEY_SELECTED_OPENROUTER_MODEL = "selected_openrouter_model"
         private const val KEY_BASE_URL = "api_base_url"
         private const val KEY_AUTO_FALLBACK = "auto_fallback_enabled"
 
@@ -53,6 +55,7 @@ class SecureStorage(
         const val DEFAULT_ASSISTANT_NAME = "REXYY"
         const val DEFAULT_MODEL = "gpt-4o-mini"
         const val DEFAULT_GEMINI_MODEL = "gemini-3.5-flash"
+        const val DEFAULT_OPENROUTER_MODEL = "google/gemini-2.5-flash"
         const val DEFAULT_BASE_URL = "https://api.openai.com/v1/"
         const val VOICE_LANG_DEFAULT = "SYSTEM_DEFAULT"
         const val VOICE_LANG_EN = "en-US"
@@ -143,11 +146,11 @@ class SecureStorage(
         if (storedId != null) {
             return AiProviderType.fromId(storedId)
         }
-        // If no provider explicitly chosen yet, pick Gemini if only Gemini key is available
-        return if (hasGeminiApiKey() && !hasOpenAiApiKey()) {
-            AiProviderType.GEMINI
-        } else {
-            AiProviderType.OPENAI
+        return when {
+            hasOpenAiApiKey() -> AiProviderType.OPENAI
+            hasGeminiApiKey() -> AiProviderType.GEMINI
+            hasOpenRouterApiKey() -> AiProviderType.OPENROUTER
+            else -> AiProviderType.OPENAI
         }
     }
 
@@ -217,10 +220,36 @@ class SecureStorage(
         prefs.edit().remove(KEY_ENCRYPTED_GEMINI_KEY).apply()
     }
 
+    // --- OpenRouter Key Management ---
+
+    fun saveOpenRouterApiKey(apiKey: String) {
+        val trimmed = apiKey.trim()
+        val encrypted = encrypt(trimmed)
+        prefs.edit().putString(KEY_ENCRYPTED_OPENROUTER_KEY, encrypted).apply()
+    }
+
+    fun getOpenRouterApiKey(): String? {
+        val encrypted = prefs.getString(KEY_ENCRYPTED_OPENROUTER_KEY, null)
+        if (encrypted != null) {
+            val decrypted = decrypt(encrypted)
+            if (decrypted.isNotBlank()) return decrypted
+        }
+        return null
+    }
+
+    fun hasOpenRouterApiKey(): Boolean {
+        return !getOpenRouterApiKey().isNullOrBlank()
+    }
+
+    fun clearOpenRouterApiKey() {
+        prefs.edit().remove(KEY_ENCRYPTED_OPENROUTER_KEY).apply()
+    }
+
     // --- Unified Key & Provider Access for Chat & Setup Screens ---
 
     fun saveApiKey(apiKey: String) {
         when (getSelectedProvider()) {
+            AiProviderType.OPENROUTER -> saveOpenRouterApiKey(apiKey)
             AiProviderType.OPENAI -> saveOpenAiApiKey(apiKey)
             AiProviderType.GEMINI -> saveGeminiApiKey(apiKey)
             AiProviderType.LOCAL_TEST -> { /* No API key needed for local test */ }
@@ -229,8 +258,9 @@ class SecureStorage(
 
     fun getApiKey(): String? {
         return when (getSelectedProvider()) {
-            AiProviderType.OPENAI -> getOpenAiApiKey() ?: getGeminiApiKey()
-            AiProviderType.GEMINI -> getGeminiApiKey() ?: getOpenAiApiKey()
+            AiProviderType.OPENROUTER -> getOpenRouterApiKey() ?: getOpenAiApiKey() ?: getGeminiApiKey()
+            AiProviderType.OPENAI -> getOpenAiApiKey() ?: getGeminiApiKey() ?: getOpenRouterApiKey()
+            AiProviderType.GEMINI -> getGeminiApiKey() ?: getOpenAiApiKey() ?: getOpenRouterApiKey()
             AiProviderType.LOCAL_TEST -> "local_test_active"
         }
     }
@@ -240,11 +270,12 @@ class SecureStorage(
     }
 
     fun hasAnyApiKey(): Boolean {
-        return getSelectedProvider() == AiProviderType.LOCAL_TEST || hasOpenAiApiKey() || hasGeminiApiKey()
+        return getSelectedProvider() == AiProviderType.LOCAL_TEST || hasOpenRouterApiKey() || hasOpenAiApiKey() || hasGeminiApiKey()
     }
 
     fun clearApiKey() {
         when (getSelectedProvider()) {
+            AiProviderType.OPENROUTER -> clearOpenRouterApiKey()
             AiProviderType.OPENAI -> clearOpenAiApiKey()
             AiProviderType.GEMINI -> clearGeminiApiKey()
             AiProviderType.LOCAL_TEST -> { /* No-op */ }
@@ -252,6 +283,14 @@ class SecureStorage(
     }
 
     // --- Model Selection Management ---
+
+    fun getOpenRouterModel(): String {
+        return prefs.getString(KEY_SELECTED_OPENROUTER_MODEL, DEFAULT_OPENROUTER_MODEL) ?: DEFAULT_OPENROUTER_MODEL
+    }
+
+    fun setOpenRouterModel(model: String) {
+        prefs.edit().putString(KEY_SELECTED_OPENROUTER_MODEL, model).apply()
+    }
 
     fun getOpenAiModel(): String {
         return prefs.getString(KEY_SELECTED_MODEL, DEFAULT_MODEL) ?: DEFAULT_MODEL
@@ -271,6 +310,7 @@ class SecureStorage(
 
     fun saveSelectedModel(model: String) {
         when (getSelectedProvider()) {
+            AiProviderType.OPENROUTER -> setOpenRouterModel(model)
             AiProviderType.OPENAI -> setOpenAiModel(model)
             AiProviderType.GEMINI -> setGeminiModel(model)
             AiProviderType.LOCAL_TEST -> { /* No model selection needed */ }
@@ -279,6 +319,7 @@ class SecureStorage(
 
     fun getSelectedModel(): String {
         return when (getSelectedProvider()) {
+            AiProviderType.OPENROUTER -> getOpenRouterModel()
             AiProviderType.OPENAI -> getOpenAiModel()
             AiProviderType.GEMINI -> getGeminiModel()
             AiProviderType.LOCAL_TEST -> "local-autonomous"

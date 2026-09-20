@@ -128,8 +128,10 @@ fun RexyyMainScreen(
                     selectedProvider = uiState.selectedProvider,
                     currentMaskedOpenAiKey = uiState.maskedOpenAiApiKey,
                     currentMaskedGeminiKey = uiState.maskedGeminiApiKey,
+                    currentMaskedOpenRouterKey = uiState.maskedOpenRouterApiKey,
                     openAiModel = uiState.openAiModel,
                     geminiModel = uiState.geminiModel,
+                    openRouterModel = uiState.openRouterModel,
                     isAutoFallbackEnabled = uiState.isAutoFallbackEnabled,
                     isVoiceCommandsEnabled = uiState.isVoiceCommandsEnabled,
                     isVoiceRepliesEnabled = uiState.isVoiceRepliesEnabled,
@@ -151,6 +153,12 @@ fun RexyyMainScreen(
                     },
                     onClearGeminiApiKey = {
                         viewModel.clearGeminiApiKey()
+                    },
+                    onUpdateOpenRouterApiKey = { key ->
+                        viewModel.updateOpenRouterApiKey(key)
+                    },
+                    onClearOpenRouterApiKey = {
+                        viewModel.clearOpenRouterApiKey()
                     },
                     onUpdateApiKey = { newKey ->
                         viewModel.saveApiKey(newKey)

@@ -31,6 +31,13 @@ object RexyyCommandRouter {
                 .trim()
             return VoiceCommand.AiChat(prompt = query.ifBlank { trimmed }, providerOverride = AiProviderType.OPENAI)
         }
+        if (lower.startsWith("ask openrouter ") || lower.startsWith("openrouter se pucho ") ||
+            lower.startsWith("ask claude ") || lower.startsWith("claude se pucho ")) {
+            val query = trimmed.replace("(?i)^ask (openrouter|claude)\\s+(to\\s+)?".toRegex(), "")
+                .replace("(?i)^(openrouter|claude) se pucho\\s+".toRegex(), "")
+                .trim()
+            return VoiceCommand.AiChat(prompt = query.ifBlank { trimmed }, providerOverride = AiProviderType.OPENROUTER)
+        }
 
         // 2. Check for multi-step task conjunctions ("and", "aur", "then", "phir")
         val plannedTask = TaskPlanner.planTask(trimmed) { singleQuery -> routeSingleAction(singleQuery) }

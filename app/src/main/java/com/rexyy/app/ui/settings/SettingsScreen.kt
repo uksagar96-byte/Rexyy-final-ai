@@ -94,8 +94,10 @@ fun SettingsScreen(
     selectedProvider: AiProviderType = AiProviderType.OPENAI,
     currentMaskedOpenAiKey: String = "",
     currentMaskedGeminiKey: String = "",
+    currentMaskedOpenRouterKey: String = "",
     openAiModel: String = "gpt-4o-mini",
     geminiModel: String = "gemini-3.5-flash",
+    openRouterModel: String = "google/gemini-2.5-flash",
     isAutoFallbackEnabled: Boolean = true,
     isVoiceCommandsEnabled: Boolean = true,
     isVoiceRepliesEnabled: Boolean = true,
@@ -106,6 +108,8 @@ fun SettingsScreen(
     onClearOpenAiApiKey: () -> Unit = {},
     onUpdateGeminiApiKey: (String) -> Unit = {},
     onClearGeminiApiKey: () -> Unit = {},
+    onUpdateOpenRouterApiKey: (String) -> Unit = {},
+    onClearOpenRouterApiKey: () -> Unit = {},
     onUpdateApiKey: (String) -> Unit,
     onClearApiKey: () -> Unit,
     onUpdateModel: (String) -> Unit,
@@ -130,10 +134,22 @@ fun SettingsScreen(
     var isGeminiKeyVisible by remember { mutableStateOf(false) }
     var showClearGeminiDialog by remember { mutableStateOf(false) }
 
+    // OpenRouter Key State
+    var newOpenRouterKey by remember { mutableStateOf("") }
+    var isOpenRouterKeyVisible by remember { mutableStateOf(false) }
+    var showClearOpenRouterDialog by remember { mutableStateOf(false) }
+
     // Model Dropdown
     var isModelDropdownExpanded by remember { mutableStateOf(false) }
     var chosenModel by remember(currentModel, activeProvider) {
-        mutableStateOf(if (activeProvider == AiProviderType.OPENAI) openAiModel else geminiModel)
+        mutableStateOf(
+            when (activeProvider) {
+                AiProviderType.OPENROUTER -> openRouterModel
+                AiProviderType.OPENAI -> openAiModel
+                AiProviderType.GEMINI -> geminiModel
+                AiProviderType.LOCAL_TEST -> "local-autonomous"
+            }
+        )
     }
 
     // Fallback Switch
@@ -295,6 +311,24 @@ fun SettingsScreen(
                                     .testTag("provider_gemini_option")
                             )
                         }
+
+                        // OpenRouter Provider Option
+                        ProviderOptionCard(
+                            title = "OpenRouter",
+                            subtitle = "Multi-Model AI • Claude, Gemini, Llama, Mistral",
+                            isSelected = activeProvider == AiProviderType.OPENROUTER,
+                            isConfigured = currentMaskedOpenRouterKey.isNotBlank(),
+                            onClick = {
+                                activeProvider = AiProviderType.OPENROUTER
+                                onSelectProvider(AiProviderType.OPENROUTER)
+                                chosenModel = openRouterModel
+                                onUpdateModel(openRouterModel)
+                                Toast.makeText(context, "Provider set to OpenRouter", Toast.LENGTH_SHORT).show()
+                            },
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .testTag("provider_openrouter_option")
+                        )
                     }
                 }
             }
@@ -394,6 +428,32 @@ fun SettingsScreen(
                         saveTestTag = "save_gemini_key_button",
                         deleteTestTag = "delete_gemini_key_button"
                     )
+
+                    Spacer(modifier = Modifier.height(20.dp))
+
+                    // --- OpenRouter Key Section ---
+                    KeyRowComponent(
+                        providerName = "OpenRouter API Key",
+                        maskedKey = currentMaskedOpenRouterKey,
+                        inputValue = newOpenRouterKey,
+                        isKeyVisible = isOpenRouterKeyVisible,
+                        placeholder = "sk-or-v1-...",
+                        onInputValueChange = { newOpenRouterKey = it },
+                        onToggleVisibility = { isOpenRouterKeyVisible = !isOpenRouterKeyVisible },
+                        onSaveKey = {
+                            if (SecurityUtils.isValidApiKey(newOpenRouterKey)) {
+                                onUpdateOpenRouterApiKey(newOpenRouterKey.trim())
+                                newOpenRouterKey = ""
+                                Toast.makeText(context, "OpenRouter API Key saved", Toast.LENGTH_SHORT).show()
+                            } else {
+                                Toast.makeText(context, "Invalid key: at least 10 characters", Toast.LENGTH_SHORT).show()
+                            }
+                        },
+                        onClearKey = { showClearOpenRouterDialog = true },
+                        inputTestTag = "openrouter_key_input",
+                        saveTestTag = "save_openrouter_key_button",
+                        deleteTestTag = "delete_openrouter_key_button"
+                    )
                 }
             }
 
@@ -431,7 +491,12 @@ fun SettingsScreen(
                     Spacer(modifier = Modifier.height(8.dp))
 
                     val availableModels = AiModelRegistry.getAvailableModels(activeProvider)
-                    val activeModelDisplay = if (activeProvider == AiProviderType.OPENAI) openAiModel else geminiModel
+                    val activeModelDisplay = when (activeProvider) {
+                        AiProviderType.OPENROUTER -> openRouterModel
+                        AiProviderType.OPENAI -> openAiModel
+                        AiProviderType.GEMINI -> geminiModel
+                        AiProviderType.LOCAL_TEST -> "local-autonomous"
+                    }
 
                     ExposedDropdownMenuBox(
                         expanded = isModelDropdownExpanded,
@@ -830,6 +895,33 @@ fun SettingsScreen(
             },
             dismissButton = {
                 TextButton(onClick = { showClearGeminiDialog = false }) {
+                    Text("Cancel", color = RexyyTextPrimary)
+                }
+            },
+            containerColor = RexyyDarkSurface,
+            titleContentColor = RexyyTextPrimary,
+            textContentColor = RexyyTextSecondary
+        )
+    }
+
+    if (showClearOpenRouterDialog) {
+        AlertDialog(
+            onDismissRequest = { showClearOpenRouterDialog = false },
+            title = { Text("Remove OpenRouter API Key?") },
+            text = { Text("Are you sure you want to remove your stored OpenRouter API key?") },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        onClearOpenRouterApiKey()
+                        showClearOpenRouterDialog = false
+                        Toast.makeText(context, "OpenRouter API Key removed", Toast.LENGTH_SHORT).show()
+                    }
+                ) {
+                    Text("Remove", color = RexyyErrorRed)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showClearOpenRouterDialog = false }) {
                     Text("Cancel", color = RexyyTextPrimary)
                 }
             },

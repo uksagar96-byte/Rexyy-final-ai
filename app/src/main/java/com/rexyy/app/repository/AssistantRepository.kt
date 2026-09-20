@@ -15,6 +15,7 @@ import com.rexyy.app.network.provider.AiProviderType
 import com.rexyy.app.network.provider.GeminiProvider
 import com.rexyy.app.network.provider.LocalTestProvider
 import com.rexyy.app.network.provider.OpenAiProvider
+import com.rexyy.app.network.provider.OpenRouterProvider
 import com.rexyy.app.utils.NetworkUtils
 import com.rexyy.app.utils.SecurityUtils
 import kotlinx.coroutines.Dispatchers
@@ -33,6 +34,7 @@ class AssistantRepository(
     private var geminiProvider: AiProvider = GeminiProvider(
         ApiClientFactory.createGeminiApi()
     ),
+    private var openRouterProvider: AiProvider = OpenRouterProvider(),
     private val localTestProvider: AiProvider = LocalTestProvider()
 ) {
     private val chatDao = database.chatMessageDao()
@@ -101,6 +103,18 @@ class AssistantRepository(
     fun clearGeminiApiKey() = secureStorage.clearGeminiApiKey()
     fun hasGeminiApiKey(): Boolean = secureStorage.hasGeminiApiKey()
 
+    fun getOpenRouterModel(): String = secureStorage.getOpenRouterModel()
+    fun saveOpenRouterModel(model: String) = secureStorage.setOpenRouterModel(model)
+
+    fun getMaskedOpenRouterApiKey(): String {
+        val raw = secureStorage.getOpenRouterApiKey()
+        return SecurityUtils.maskApiKey(raw)
+    }
+
+    fun saveOpenRouterApiKey(apiKey: String) = secureStorage.saveOpenRouterApiKey(apiKey)
+    fun clearOpenRouterApiKey() = secureStorage.clearOpenRouterApiKey()
+    fun hasOpenRouterApiKey(): Boolean = secureStorage.hasOpenRouterApiKey()
+
     fun getBaseUrl(): String = secureStorage.getBaseUrl()
     fun saveBaseUrl(url: String) {
         secureStorage.saveBaseUrl(url)
@@ -146,6 +160,7 @@ class AssistantRepository(
     private fun getProvider(type: AiProviderType): AiProvider {
         return when (type) {
             AiProviderType.LOCAL_TEST -> localTestProvider
+            AiProviderType.OPENROUTER -> openRouterProvider
             AiProviderType.OPENAI -> openAiProvider
             AiProviderType.GEMINI -> geminiProvider
         }
@@ -157,6 +172,11 @@ class AssistantRepository(
                 providerType = AiProviderType.LOCAL_TEST,
                 apiKey = "local_test",
                 model = "local-offline-v1"
+            )
+            AiProviderType.OPENROUTER -> AiProviderConfig(
+                providerType = AiProviderType.OPENROUTER,
+                apiKey = secureStorage.getOpenRouterApiKey() ?: "",
+                model = secureStorage.getOpenRouterModel()
             )
             AiProviderType.OPENAI -> AiProviderConfig(
                 providerType = AiProviderType.OPENAI,
@@ -248,27 +268,35 @@ class AssistantRepository(
             is NetworkResult.Error -> {
                 // Check if automatic fallback is enabled and secondary provider is available
                 val canFallback = secureStorage.isAutoFallbackEnabled() && forcedProvider == null
-                val secondaryType = if (primaryType == AiProviderType.OPENAI) AiProviderType.GEMINI else AiProviderType.OPENAI
-                val secondaryConfig = getProviderConfig(secondaryType)
+                val fallbackCandidates = listOf(
+                    AiProviderType.OPENAI,
+                    AiProviderType.GEMINI,
+                    AiProviderType.OPENROUTER
+                ).filter { it != primaryType }
 
-                if (canFallback && secondaryConfig.apiKey.isNotBlank()) {
-                    val secondaryProviderImpl = getProvider(secondaryType)
-                    val fallbackResult = secondaryProviderImpl.generateReply(
-                        prompt = userText,
-                        conversationHistory = existingHistory,
-                        config = secondaryConfig
-                    )
+                if (canFallback) {
+                    for (secondaryType in fallbackCandidates) {
+                        val secondaryConfig = getProviderConfig(secondaryType)
+                        if (secondaryConfig.apiKey.isNotBlank()) {
+                            val secondaryProviderImpl = getProvider(secondaryType)
+                            val fallbackResult = secondaryProviderImpl.generateReply(
+                                prompt = userText,
+                                conversationHistory = existingHistory,
+                                config = secondaryConfig
+                            )
 
-                    if (fallbackResult is NetworkResult.Success) {
-                        val replyWithNotice = "[Fallback to ${secondaryType.displayName}]\n\n${fallbackResult.data}"
-                        val assistantEntity = ChatMessageEntity(
-                            content = replyWithNotice,
-                            sender = MessageSender.ASSISTANT.name,
-                            timestamp = System.currentTimeMillis(),
-                            isError = false
-                        )
-                        val insertedId = chatDao.insertMessage(assistantEntity)
-                        return@withContext NetworkResult.Success(assistantEntity.copy(id = insertedId).toDomain())
+                            if (fallbackResult is NetworkResult.Success) {
+                                val replyWithNotice = "[Fallback to ${secondaryType.displayName}]\n\n${fallbackResult.data}"
+                                val assistantEntity = ChatMessageEntity(
+                                    content = replyWithNotice,
+                                    sender = MessageSender.ASSISTANT.name,
+                                    timestamp = System.currentTimeMillis(),
+                                    isError = false
+                                )
+                                val insertedId = chatDao.insertMessage(assistantEntity)
+                                return@withContext NetworkResult.Success(assistantEntity.copy(id = insertedId).toDomain())
+                            }
+                        }
                     }
                 }
 

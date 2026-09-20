@@ -83,7 +83,7 @@ class WhatsAppActionManager(private val context: Context) {
                     addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
                 }
                 context.startActivity(intent)
-                WhatsAppActionResult.Success("Opening WhatsApp chat with $target...")
+                WhatsAppActionResult.Success("WhatsApp chat opened with $target. Message populated — tap send to deliver.")
             } else {
                 val sendIntent = Intent(Intent.ACTION_SEND).apply {
                     type = "text/plain"
@@ -92,7 +92,7 @@ class WhatsAppActionManager(private val context: Context) {
                     addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
                 }
                 context.startActivity(sendIntent)
-                WhatsAppActionResult.Success("Sending WhatsApp message for $target...")
+                WhatsAppActionResult.Success("WhatsApp opened with message for $target. Please choose contact and tap send.")
             }
         } catch (e: Exception) {
             WhatsAppActionResult.Failure("Failed to send WhatsApp message: ${e.localizedMessage}")

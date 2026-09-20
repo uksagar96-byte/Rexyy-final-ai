@@ -354,7 +354,7 @@ object VoiceCommandExecutor {
         return try {
             context.startActivity(intent)
             val formatted = String.format("%02d:%02d", hour, minute)
-            VoiceCommandResult.Handled("Alarm set for $formatted.")
+            VoiceCommandResult.Handled("Alarm screen open kar di hai ($formatted). Kripya Clock app mein confirm karein.")
         } catch (e: Exception) {
             VoiceCommandResult.Error("Could not set alarm: ${e.localizedMessage}")
         }

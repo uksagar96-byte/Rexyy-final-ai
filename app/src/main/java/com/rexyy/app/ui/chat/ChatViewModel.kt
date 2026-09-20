@@ -84,8 +84,10 @@ class ChatViewModel(
             currentModel = repository.getSelectedModel(),
             openAiModel = repository.getOpenAiModel(),
             geminiModel = repository.getGeminiModel(),
+            openRouterModel = repository.getOpenRouterModel(),
             maskedOpenAiApiKey = repository.getMaskedOpenAiApiKey(),
             maskedGeminiApiKey = repository.getMaskedGeminiApiKey(),
+            maskedOpenRouterApiKey = repository.getMaskedOpenRouterApiKey(),
             isAutoFallbackEnabled = repository.isAutoFallbackEnabled(),
             isVoiceCommandsEnabled = repository.isVoiceCommandsEnabled(),
             isVoiceRepliesEnabled = repository.isVoiceRepliesEnabled(),
@@ -548,6 +550,28 @@ class ChatViewModel(
         }
     }
 
+    fun updateOpenRouterApiKey(apiKey: String) {
+        repository.saveOpenRouterApiKey(apiKey)
+        _uiState.update {
+            it.copy(
+                hasApiKey = repository.hasApiKey(),
+                maskedApiKey = repository.getMaskedApiKey(),
+                maskedOpenRouterApiKey = repository.getMaskedOpenRouterApiKey()
+            )
+        }
+    }
+
+    fun clearOpenRouterApiKey() {
+        repository.clearOpenRouterApiKey()
+        _uiState.update {
+            it.copy(
+                hasApiKey = repository.hasApiKey(),
+                maskedApiKey = repository.getMaskedApiKey(),
+                maskedOpenRouterApiKey = ""
+            )
+        }
+    }
+
     fun updateOpenAiModel(model: String) {
         repository.saveOpenAiModel(model)
         _uiState.update {
@@ -568,6 +592,16 @@ class ChatViewModel(
         }
     }
 
+    fun updateOpenRouterModel(model: String) {
+        repository.saveOpenRouterModel(model)
+        _uiState.update {
+            it.copy(
+                openRouterModel = model,
+                currentModel = if (it.selectedProvider == AiProviderType.OPENROUTER) model else it.currentModel
+            )
+        }
+    }
+
     fun setAutoFallbackEnabled(enabled: Boolean) {
         repository.setAutoFallbackEnabled(enabled)
         _uiState.update { it.copy(isAutoFallbackEnabled = enabled) }
@@ -580,7 +614,8 @@ class ChatViewModel(
                 hasApiKey = true,
                 maskedApiKey = repository.getMaskedApiKey(),
                 maskedOpenAiApiKey = repository.getMaskedOpenAiApiKey(),
-                maskedGeminiApiKey = repository.getMaskedGeminiApiKey()
+                maskedGeminiApiKey = repository.getMaskedGeminiApiKey(),
+                maskedOpenRouterApiKey = repository.getMaskedOpenRouterApiKey()
             )
         }
     }
@@ -592,14 +627,22 @@ class ChatViewModel(
                 hasApiKey = repository.hasApiKey(),
                 maskedApiKey = repository.getMaskedApiKey(),
                 maskedOpenAiApiKey = repository.getMaskedOpenAiApiKey(),
-                maskedGeminiApiKey = repository.getMaskedGeminiApiKey()
+                maskedGeminiApiKey = repository.getMaskedGeminiApiKey(),
+                maskedOpenRouterApiKey = repository.getMaskedOpenRouterApiKey()
             )
         }
     }
 
     fun updateModel(modelName: String) {
         repository.saveSelectedModel(modelName)
-        _uiState.update { it.copy(currentModel = modelName) }
+        _uiState.update {
+            it.copy(
+                currentModel = modelName,
+                openAiModel = if (it.selectedProvider == AiProviderType.OPENAI) modelName else it.openAiModel,
+                geminiModel = if (it.selectedProvider == AiProviderType.GEMINI) modelName else it.geminiModel,
+                openRouterModel = if (it.selectedProvider == AiProviderType.OPENROUTER) modelName else it.openRouterModel
+            )
+        }
     }
 
     fun clearError() {

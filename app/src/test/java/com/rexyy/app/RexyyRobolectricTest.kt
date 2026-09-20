@@ -310,4 +310,43 @@ class RexyyRobolectricTest {
         assertTrue(multi.steps[0] is VoiceCommand.OpenApp)
         assertTrue(multi.steps[1] is VoiceCommand.GoogleSearch)
     }
+
+    @Test
+    fun testSecureStorageOpenRouter() {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val storage = SecureStorage(context, includeBuildConfigKeys = false)
+
+        assertFalse(storage.hasOpenRouterApiKey())
+        storage.saveOpenRouterApiKey("sk-or-v1-abcdef1234567890")
+        assertTrue(storage.hasOpenRouterApiKey())
+        assertEquals("sk-or-v1-abcdef1234567890", storage.getOpenRouterApiKey())
+        assertEquals("google/gemini-2.5-flash", storage.getOpenRouterModel())
+
+        storage.setOpenRouterModel("anthropic/claude-3.5-sonnet")
+        assertEquals("anthropic/claude-3.5-sonnet", storage.getOpenRouterModel())
+
+        storage.clearOpenRouterApiKey()
+        assertFalse(storage.hasOpenRouterApiKey())
+    }
+
+    @Test
+    fun testRexyyCommandRouterOpenRouterOverride() {
+        val route1 = com.rexyy.app.router.RexyyCommandRouter.route("Ask OpenRouter what is the distance to Mars")
+        assertTrue(route1 is VoiceCommand.AiChat)
+        val chat1 = route1 as VoiceCommand.AiChat
+        assertEquals("what is the distance to Mars", chat1.prompt)
+        assertEquals(com.rexyy.app.network.provider.AiProviderType.OPENROUTER, chat1.providerOverride)
+
+        val route2 = com.rexyy.app.router.RexyyCommandRouter.route("Ask Claude write a poem")
+        assertTrue(route2 is VoiceCommand.AiChat)
+        val chat2 = route2 as VoiceCommand.AiChat
+        assertEquals("write a poem", chat2.prompt)
+        assertEquals(com.rexyy.app.network.provider.AiProviderType.OPENROUTER, chat2.providerOverride)
+
+        val route3 = com.rexyy.app.router.RexyyCommandRouter.route("OpenRouter se pucho weather kaisa hai")
+        assertTrue(route3 is VoiceCommand.AiChat)
+        val chat3 = route3 as VoiceCommand.AiChat
+        assertEquals("weather kaisa hai", chat3.prompt)
+        assertEquals(com.rexyy.app.network.provider.AiProviderType.OPENROUTER, chat3.providerOverride)
+    }
 }
