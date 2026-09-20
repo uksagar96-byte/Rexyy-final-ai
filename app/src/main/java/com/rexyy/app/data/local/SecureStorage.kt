@@ -13,7 +13,10 @@ import javax.crypto.KeyGenerator
 import javax.crypto.SecretKey
 import javax.crypto.spec.GCMParameterSpec
 
-class SecureStorage(context: Context) {
+class SecureStorage(
+    context: Context,
+    var includeBuildConfigKeys: Boolean = true
+) {
 
     private val prefs: SharedPreferences = context.applicationContext.getSharedPreferences(
         PREFS_NAME,
@@ -166,6 +169,7 @@ class SecureStorage(context: Context) {
             val decrypted = decrypt(encrypted)
             if (decrypted.isNotBlank()) return decrypted
         }
+        if (!includeBuildConfigKeys) return null
         // Fallback to BuildConfig if provided via AI Studio Secrets and not placeholder
         val buildConfigKey = BuildConfig.OPENAI_API_KEY
         if (buildConfigKey.isNotBlank() && buildConfigKey != "MY_OPENAI_API_KEY" && buildConfigKey != "DEFAULT_VALUE") {
@@ -196,6 +200,7 @@ class SecureStorage(context: Context) {
             val decrypted = decrypt(encrypted)
             if (decrypted.isNotBlank()) return decrypted
         }
+        if (!includeBuildConfigKeys) return null
         // Fallback to BuildConfig if provided via AI Studio Secrets and not placeholder
         val buildConfigKey = BuildConfig.GEMINI_API_KEY
         if (buildConfigKey.isNotBlank() && buildConfigKey != "MY_GEMINI_API_KEY" && buildConfigKey != "DEFAULT_VALUE") {

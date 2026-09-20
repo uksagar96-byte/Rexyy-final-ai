@@ -78,6 +78,16 @@ class TaskExecutor(private val context: Context) {
                         onStepUpdated(currentPlan)
                         return@withContext stepResult
                     }
+                    is VoiceCommandResult.CollectMessageInput -> {
+                        updatedSteps[i] = updatedSteps[i].copy(
+                            status = TaskStepStatus.SUCCESS,
+                            resultMessage = stepResult.prompt
+                        )
+                        currentPlan = currentPlan.copy(steps = updatedSteps)
+                        _activeTask.value = currentPlan
+                        onStepUpdated(currentPlan)
+                        return@withContext stepResult
+                    }
                     is VoiceCommandResult.Error -> {
                         updatedSteps[i] = updatedSteps[i].copy(
                             status = TaskStepStatus.FAILED,

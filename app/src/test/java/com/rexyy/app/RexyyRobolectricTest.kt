@@ -35,7 +35,7 @@ class RexyyRobolectricTest {
     @Test
     fun testSecureStorage() {
         val context = ApplicationProvider.getApplicationContext<Context>()
-        val storage = SecureStorage(context)
+        val storage = SecureStorage(context, includeBuildConfigKeys = false)
 
         assertFalse(storage.hasApiKey())
         storage.saveApiKey("sk-test-sample-api-key-12345")
@@ -184,7 +184,7 @@ class RexyyRobolectricTest {
     @Test
     fun testSecureStorageMultiProviderAndDualKeys() {
         val context = ApplicationProvider.getApplicationContext<Context>()
-        val storage = SecureStorage(context)
+        val storage = SecureStorage(context, includeBuildConfigKeys = false)
 
         // Default provider
         assertEquals(com.rexyy.app.network.provider.AiProviderType.OPENAI, storage.getSelectedProvider())

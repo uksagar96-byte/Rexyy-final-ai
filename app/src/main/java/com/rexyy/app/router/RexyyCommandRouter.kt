@@ -573,6 +573,41 @@ object RexyyCommandRouter {
         return null
     }
 
+    private fun parseSettingsCommand(raw: String, lower: String): VoiceCommand.OpenSettings? {
+        if (lower == "settings" || lower == "setting" || lower == "settings kholo" || lower == "open settings" || lower == "system settings") {
+            return VoiceCommand.OpenSettings(subSettings = "", rawInput = raw)
+        }
+        if (lower.contains("display setting") || lower.contains("screen setting")) {
+            return VoiceCommand.OpenSettings(subSettings = "display", rawInput = raw)
+        }
+        if (lower.contains("sound setting") || lower.contains("audio setting") || lower.contains("ringtone setting")) {
+            return VoiceCommand.OpenSettings(subSettings = "sound", rawInput = raw)
+        }
+        if (lower.contains("battery setting") || lower.contains("battery status") || lower.contains("battery saver")) {
+            return VoiceCommand.OpenSettings(subSettings = "battery", rawInput = raw)
+        }
+        if (lower.contains("app setting") || lower.contains("manage apps") || lower.contains("installed apps")) {
+            return VoiceCommand.OpenSettings(subSettings = "apps", rawInput = raw)
+        }
+        if (lower.contains("developer option")) {
+            return VoiceCommand.OpenSettings(subSettings = "developer", rawInput = raw)
+        }
+        if (lower.contains("location setting") || lower.contains("gps setting")) {
+            return VoiceCommand.OpenSettings(subSettings = "location", rawInput = raw)
+        }
+        if (lower.contains("storage setting") || lower.contains("internal storage")) {
+            return VoiceCommand.OpenSettings(subSettings = "storage", rawInput = raw)
+        }
+        if (lower.contains("network setting") || lower.contains("data usage setting")) {
+            return VoiceCommand.OpenSettings(subSettings = "network", rawInput = raw)
+        }
+        if (lower.endsWith(" settings") || lower.startsWith("settings ") || lower.contains("settings kholo") || lower.contains("setting kholo")) {
+            val sub = raw.replace("(?i)(open|settings|setting|kholo|chalao)".toRegex(), "").trim()
+            return VoiceCommand.OpenSettings(subSettings = sub, rawInput = raw)
+        }
+        return null
+    }
+
     private fun isReminderCommand(lower: String): Boolean {
         return lower.startsWith("remind me ") || lower.contains("yaad dilao")
     }

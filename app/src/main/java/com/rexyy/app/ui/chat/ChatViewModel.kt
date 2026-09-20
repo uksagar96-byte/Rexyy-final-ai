@@ -292,6 +292,20 @@ class ChatViewModel(
                         voiceTtsManager.speak(result.prompt, _uiState.value.voiceLanguage)
                     }
                 }
+                is VoiceCommandResult.CollectMessageInput -> {
+                    repository.recordCommandInteraction(rawInput, result.prompt, isError = false)
+                    _uiState.update {
+                        it.copy(
+                            inputText = "",
+                            voiceState = if (isVoice && it.isVoiceRepliesEnabled) VoiceState.SPEAKING else VoiceState.IDLE,
+                            voiceStatusMessage = null,
+                            lastActionFeedback = result.prompt
+                        )
+                    }
+                    if (isVoice && _uiState.value.isVoiceRepliesEnabled) {
+                        voiceTtsManager.speak(result.prompt, _uiState.value.voiceLanguage)
+                    }
+                }
                 is VoiceCommandResult.ForwardToAi -> {
                     _uiState.update { it.copy(inputText = "", isLoading = true) }
                     executeAiMessage(result.prompt, isSpokenResponseRequested = isVoice, providerOverride = result.providerOverride)
