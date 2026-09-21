@@ -73,6 +73,23 @@ object RexyyCommandRouter {
             return VoiceCommand.AreYouThere(rawInput = trimmed)
         }
 
+        // --- 0.1 Local Device Hardware Queries (Battery, Date, Time, Flashlight) ---
+        if (isBatteryCommand(lower)) {
+            return VoiceCommand.GetBattery(rawInput = trimmed)
+        }
+        if (isDateCommand(lower)) {
+            return VoiceCommand.GetDate(rawInput = trimmed)
+        }
+        if (isTimeCommand(lower)) {
+            return VoiceCommand.GetTime(rawInput = trimmed)
+        }
+        val flashlightCommand = parseFlashlightCommand(trimmed, lower)
+        if (flashlightCommand != null) return flashlightCommand
+
+        // --- 0.2 Universal First-Class App & Web Search ---
+        val appSearchCommand = parseAppSearchCommand(trimmed, lower)
+        if (appSearchCommand != null) return appSearchCommand
+
         // --- A. Incoming Call & Telephony Control ---
         if (isWhoIsCallingCommand(lower)) {
             return VoiceCommand.CheckCaller(rawInput = trimmed)
@@ -177,9 +194,98 @@ object RexyyCommandRouter {
     }
 
     private fun isStopCommand(lower: String): Boolean {
-        return lower == "stop" || lower == "ruko" || lower == "bas" ||
+        return lower == "stop" || lower == "ruko" || lower == "ruk ja" || lower == "bas" ||
                 lower == "cancel" || lower == "cancel karo" || lower == "shut up" ||
-                lower == "stop listening" || lower == "stop speaking"
+                lower == "chup" || lower == "chup raho" || lower == "shant raho" ||
+                lower == "roko" || lower == "stop listening" || lower == "stop speaking"
+    }
+
+    private fun isBatteryCommand(lower: String): Boolean {
+        return lower.contains("battery") || lower.contains("charge kitna") ||
+                lower.contains("charging kitni") || lower.contains("battery kitni")
+    }
+
+    private fun isDateCommand(lower: String): Boolean {
+        return lower.contains("date kya") || lower.contains("tarikh kya") || lower.contains("tareekh kya") ||
+                lower.contains("what is the date") || lower.contains("what date is it") || lower.contains("today's date") ||
+                lower == "date" || lower == "tarikh" || lower == "aaj ki date" || lower == "today date"
+    }
+
+    private fun isTimeCommand(lower: String): Boolean {
+        return lower.contains("time kya") || lower.contains("samay kya") || lower.contains("kitne baje") ||
+                lower.contains("what is the time") || lower.contains("what time is it") || lower.contains("current time") ||
+                lower == "time" || lower == "samay"
+    }
+
+    private fun parseFlashlightCommand(raw: String, lower: String): VoiceCommand.ToggleFlashlight? {
+        if (lower.contains("torch") || lower.contains("flashlight") || lower.contains("flash light")) {
+            val turnOff = lower.contains("off") || lower.contains("band") || lower.contains("bujhao")
+            return VoiceCommand.ToggleFlashlight(turnOn = !turnOff, rawInput = raw)
+        }
+        return null
+    }
+
+    private fun parseAppSearchCommand(raw: String, lower: String): VoiceCommand.AppSearch? {
+        // 1. "YouTube pe cricket search karo" / "YouTube par cricket search karo" / "YouTube mein cricket dhundho"
+        val appPrefixHinglish = Regex("(?i)^(youtube|chrome|maps|spotify|play\\s*store|google)\\s+(pe|par|mein)\\s+(.+?)\\s+(search\\s+karo|search|dhundho|play karo|dekho)$").find(raw)
+        if (appPrefixHinglish != null) {
+            val app = normalizeSearchApp(appPrefixHinglish.groupValues[1])
+            val q = appPrefixHinglish.groupValues[3].trim()
+            return VoiceCommand.AppSearch(targetApp = app, query = q, rawInput = raw)
+        }
+
+        // 2. "Search cricket on YouTube" / "Search for cricket in YouTube"
+        val searchOnApp = Regex("(?i)^search\\s+(for\\s+)?(.+?)\\s+(on|in|using)\\s+(youtube|chrome|maps|spotify|play\\s*store|google)$").find(raw)
+        if (searchOnApp != null) {
+            val q = searchOnApp.groupValues[2].trim()
+            val app = normalizeSearchApp(searchOnApp.groupValues[4])
+            return VoiceCommand.AppSearch(targetApp = app, query = q, rawInput = raw)
+        }
+
+        // 3. "X kholo aur Y search karo" (e.g. "YouTube kholo aur cricket search karo")
+        val openAndSearch = Regex("(?i)^(.+?)\\s+(kholo|open karo)\\s+(aur|and)\\s+(.+?)\\s+(search karo|search|dhundho)$").find(raw)
+        if (openAndSearch != null) {
+            val app = normalizeSearchApp(openAndSearch.groupValues[1])
+            val q = openAndSearch.groupValues[4].trim()
+            return VoiceCommand.AppSearch(targetApp = app, query = q, rawInput = raw)
+        }
+
+        // 4. "Y ko X par dhundho" (e.g. "cricket ko YouTube par dhundho")
+        val queryOnApp = Regex("(?i)^(.+?)\\s+ko\\s+(youtube|chrome|maps|spotify|play\\s*store|google)\\s+(par|pe|mein)\\s+(dhundho|search karo)$").find(raw)
+        if (queryOnApp != null) {
+            val q = queryOnApp.groupValues[1].trim()
+            val app = normalizeSearchApp(queryOnApp.groupValues[2])
+            return VoiceCommand.AppSearch(targetApp = app, query = q, rawInput = raw)
+        }
+
+        // 5. "Y ke videos search karo" (e.g. "cricket ke videos search karo")
+        val videoSearch = Regex("(?i)^(.+?)\\s+ke\\s+videos?\\s+(search karo|search|dhundho|dikhao)$").find(raw)
+        if (videoSearch != null) {
+            val q = videoSearch.groupValues[1].trim()
+            return VoiceCommand.AppSearch(targetApp = "youtube", query = q, searchType = "video", rawInput = raw)
+        }
+
+        // 6. "Search karo REXYY kya hai" / "Google karo X"
+        if (lower.startsWith("search karo ") || lower.startsWith("google karo ")) {
+            val q = raw.substring(12).trim()
+            if (q.isNotBlank()) {
+                return VoiceCommand.AppSearch(targetApp = "web", query = q, rawInput = raw)
+            }
+        }
+
+        return null
+    }
+
+    private fun normalizeSearchApp(app: String): String {
+        val l = app.lowercase().trim()
+        return when {
+            l.contains("youtube") || l == "yt" -> "youtube"
+            l.contains("chrome") || l.contains("browser") -> "chrome"
+            l.contains("map") -> "maps"
+            l.contains("spotify") || l.contains("music") -> "spotify"
+            l.contains("play") || l.contains("store") -> "playstore"
+            else -> l
+        }
     }
 
     private fun isRepeatCommand(lower: String): Boolean {
@@ -236,10 +342,16 @@ object RexyyCommandRouter {
     }
 
     private fun cleanTargetName(raw: String): String {
-        return raw.replace("(?i)^\\s*(to|on|for|pe|par|ko|send|message)\\s+".toRegex(), "")
-            .replace("(?i)\\s+(ko|pe|par|bhejo|to|on)\\s*$".toRegex(), "")
-            .trim()
-            .ifBlank { "Contact" }
+        var clean = raw.trim()
+        var changed = true
+        while (changed) {
+            val prev = clean
+            clean = clean.replace("(?i)^\\s*(to|on|for|pe|par|ko|send|message|call)\\s+".toRegex(), "")
+                .replace("(?i)\\s+(ko|pe|par|bhejo|to|on)\\s*$".toRegex(), "")
+                .trim()
+            changed = (clean != prev)
+        }
+        return clean.ifBlank { "Contact" }
     }
 
     private fun isWhoIsCallingCommand(lower: String): Boolean {
@@ -321,8 +433,8 @@ object RexyyCommandRouter {
             return VoiceCommand.WhatsAppMessage(target = target, body = body, rawInput = raw)
         }
 
-        // "Rahul ko whatsapp par bolo main late ho jaunga"
-        val boloPattern = Regex("(?i)^(.+?)\\s+ko\\s+whatsapp\\s+(par|pe)\\s+(bolo|bhejo|likho)\\s+(.+)$")
+        // "Ramzan ko WhatsApp pe bol kal milte hain" / "Rahul ko whatsapp par bolo main late ho jaunga"
+        val boloPattern = Regex("(?i)^(.+?)\\s+ko\\s+whats\\s*app\\s*(par|pe)?\\s*(bolo|bol|bhejo|likho|send karo|kaho|likh do|bhej do)\\s+(.+)$")
         val boloMatch = boloPattern.find(raw)
         if (boloMatch != null) {
             val target = cleanTargetName(boloMatch.groupValues[1])

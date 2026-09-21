@@ -8,6 +8,16 @@
     <!-- Audio recording permission required for voice commands & speech recognition -->
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
 
+    <!-- Foreground service permissions for background assistant & microphone listening -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+
+    <!-- System overlay & brightness write settings permissions -->
+    <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
+    <uses-permission android:name="android.permission.WRITE_SETTINGS" />
+
     <!-- System alarms & timer permissions -->
     <uses-permission android:name="com.android.alarm.permission.SET_ALARM" />
 
@@ -24,6 +34,8 @@
     <uses-permission android:name="android.permission.BLUETOOTH" />
     <uses-permission android:name="android.permission.BLUETOOTH_ADMIN" />
     <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
+    <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
+    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
 
     <!-- Package visibility queries for dynamic app launcher -->
     <queries>
@@ -73,6 +85,12 @@
                 android:name="android.accessibilityservice"
                 android:resource="@xml/accessibility_service_config" />
         </service>
+
+        <!-- Foreground Microphone Service for Real Background Assistant -->
+        <service
+            android:name="com.rexyy.app.service.RexyyBackgroundAssistantService"
+            android:foregroundServiceType="microphone"
+            android:exported="false" />
 
     </application>
 

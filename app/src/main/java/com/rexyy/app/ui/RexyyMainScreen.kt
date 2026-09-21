@@ -14,6 +14,8 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import com.rexyy.app.network.provider.AiProviderType
 import com.rexyy.app.ui.chat.ChatScreen
 import com.rexyy.app.ui.chat.ChatViewModel
+import com.rexyy.app.ui.control.ControlCenterScreen
+import com.rexyy.app.ui.dev.DevConsoleScreen
 import com.rexyy.app.ui.main.MainAssistantScreen
 import com.rexyy.app.ui.navigation.Screen
 import com.rexyy.app.ui.permissions.PermissionCenterScreen
@@ -96,6 +98,8 @@ fun RexyyMainScreen(
                     onOpenChat = { currentScreen = Screen.Chat },
                     onOpenSettings = { currentScreen = Screen.Settings },
                     onOpenPermissions = { currentScreen = Screen.PermissionCenter },
+                    onOpenControlCenter = { currentScreen = Screen.ControlCenter },
+                    onOpenDevConsole = { currentScreen = Screen.DevConsole },
                     onConfirmAction = { viewModel.confirmPendingAction() },
                     onCancelAction = { viewModel.cancelPendingAction() },
                     onCancelTask = { viewModel.cancelActiveTask() }
@@ -189,6 +193,18 @@ fun RexyyMainScreen(
 
             is Screen.PermissionCenter -> {
                 PermissionCenterScreen(
+                    onNavigateBack = { currentScreen = Screen.MainAssistant }
+                )
+            }
+
+            is Screen.ControlCenter -> {
+                ControlCenterScreen(
+                    onNavigateBack = { currentScreen = Screen.MainAssistant }
+                )
+            }
+
+            is Screen.DevConsole -> {
+                DevConsoleScreen(
                     onNavigateBack = { currentScreen = Screen.MainAssistant }
                 )
             }

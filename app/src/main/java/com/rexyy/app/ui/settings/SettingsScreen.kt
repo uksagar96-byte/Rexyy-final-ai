@@ -56,6 +56,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -73,6 +74,8 @@ import androidx.compose.ui.unit.sp
 import com.rexyy.app.data.local.SecureStorage
 import com.rexyy.app.network.provider.AiModelRegistry
 import com.rexyy.app.network.provider.AiProviderType
+import com.rexyy.app.service.BackgroundAssistantManager
+import com.rexyy.app.service.RexyyAssistantServiceState
 import com.rexyy.app.ui.theme.RexyyAmberWarning
 import com.rexyy.app.ui.theme.RexyyCyanPrimary
 import com.rexyy.app.ui.theme.RexyyDarkBackground
@@ -647,6 +650,45 @@ fun SettingsScreen(
                                 fontWeight = FontWeight.SemiBold,
                                 color = RexyyTextPrimary
                             )
+                        )
+                    }
+
+                    Spacer(modifier = Modifier.height(16.dp))
+
+                    // Always Ready (Background Assistant) Toggle
+                    val isBgRunning by RexyyAssistantServiceState.serviceRunning.collectAsState()
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = "Always Ready (Background Assistant)",
+                                style = MaterialTheme.typography.bodyLarge.copy(
+                                    fontWeight = FontWeight.Medium,
+                                    color = RexyyTextPrimary
+                                )
+                            )
+                            Spacer(modifier = Modifier.height(2.dp))
+                            Text(
+                                text = "Listen for 'Hello Rex' or 'Hey Rex' even when the app is closed or minimized",
+                                style = MaterialTheme.typography.bodySmall.copy(color = RexyyTextSecondary)
+                            )
+                        }
+                        Spacer(modifier = Modifier.width(12.dp))
+                        Switch(
+                            checked = isBgRunning,
+                            onCheckedChange = { _ ->
+                                BackgroundAssistantManager.toggleAssistant(context)
+                            },
+                            colors = SwitchDefaults.colors(
+                                checkedThumbColor = RexyyDarkBackground,
+                                checkedTrackColor = RexyyCyanPrimary,
+                                uncheckedThumbColor = RexyyTextMuted,
+                                uncheckedTrackColor = RexyyDarkSurfaceVariant
+                            ),
+                            modifier = Modifier.testTag("background_assistant_switch")
                         )
                     }
 

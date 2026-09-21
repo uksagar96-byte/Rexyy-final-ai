@@ -4,6 +4,7 @@ import android.app.SearchManager
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
+import android.hardware.camera2.CameraManager
 import android.media.AudioManager
 import android.net.Uri
 import android.os.BatteryManager
@@ -26,6 +27,9 @@ import com.rexyy.app.whatsapp.WhatsAppActionResult
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.net.URLEncoder
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 
 object VoiceCommandExecutor {
 
@@ -33,6 +37,11 @@ object VoiceCommandExecutor {
         return@withContext try {
             when (command) {
                 is VoiceCommand.OpenApp -> executeOpenApp(command.appName, context)
+                is VoiceCommand.AppSearch -> executeAppSearch(command, context)
+                is VoiceCommand.GetBattery -> executeGetBattery(context)
+                is VoiceCommand.GetDate -> executeGetDate()
+                is VoiceCommand.GetTime -> executeGetTime()
+                is VoiceCommand.ToggleFlashlight -> executeToggleFlashlight(command.turnOn, context)
                 is VoiceCommand.OpenWhatsApp -> executeOpenWhatsApp(context)
                 is VoiceCommand.WhatsAppMessage -> executeWhatsAppMessage(command, context)
                 is VoiceCommand.WhatsAppChat -> executeWhatsAppChat(command.target, context)
@@ -512,6 +521,140 @@ object VoiceCommandExecutor {
             VoiceCommandResult.Handled("Creating reminder: \"$title\"")
         } catch (_: Exception) {
             VoiceCommandResult.Handled("Reminder noted: $title")
+        }
+    }
+
+    private fun executeAppSearch(cmd: VoiceCommand.AppSearch, context: Context): VoiceCommandResult {
+        return try {
+            when (cmd.targetApp) {
+                "youtube" -> {
+                    val encoded = URLEncoder.encode(cmd.query, "UTF-8")
+                    val intent = Intent(Intent.ACTION_SEARCH).apply {
+                        setPackage("com.google.android.youtube")
+                        putExtra("query", cmd.query)
+                        flags = Intent.FLAG_ACTIVITY_NEW_TASK
+                    }
+                    try {
+                        context.startActivity(intent)
+                    } catch (_: Exception) {
+                        val webIntent = Intent(Intent.ACTION_VIEW, Uri.parse("https://www.youtube.com/results?search_query=$encoded")).apply {
+                            flags = Intent.FLAG_ACTIVITY_NEW_TASK
+                        }
+                        context.startActivity(webIntent)
+                    }
+                    VoiceCommandResult.Handled("Searching for \"${cmd.query}\" on YouTube...")
+                }
+                "chrome" -> {
+                    val encoded = URLEncoder.encode(cmd.query, "UTF-8")
+                    val intent = Intent(Intent.ACTION_VIEW, Uri.parse("https://www.google.com/search?q=$encoded")).apply {
+                        setPackage("com.android.chrome")
+                        flags = Intent.FLAG_ACTIVITY_NEW_TASK
+                    }
+                    try {
+                        context.startActivity(intent)
+                    } catch (_: Exception) {
+                        val browserIntent = Intent(Intent.ACTION_VIEW, Uri.parse("https://www.google.com/search?q=$encoded")).apply {
+                            flags = Intent.FLAG_ACTIVITY_NEW_TASK
+                        }
+                        context.startActivity(browserIntent)
+                    }
+                    VoiceCommandResult.Handled("Searching for \"${cmd.query}\" on Chrome...")
+                }
+                "maps" -> {
+                    val encoded = Uri.encode(cmd.query)
+                    val mapIntent = Intent(Intent.ACTION_VIEW, Uri.parse("geo:0,0?q=$encoded")).apply {
+                        setPackage("com.google.android.apps.maps")
+                        flags = Intent.FLAG_ACTIVITY_NEW_TASK
+                    }
+                    try {
+                        context.startActivity(mapIntent)
+                    } catch (_: Exception) {
+                        val webMap = Intent(Intent.ACTION_VIEW, Uri.parse("https://maps.google.com/?q=$encoded")).apply {
+                            flags = Intent.FLAG_ACTIVITY_NEW_TASK
+                        }
+                        context.startActivity(webMap)
+                    }
+                    VoiceCommandResult.Handled("Searching for \"${cmd.query}\" on Maps...")
+                }
+                "spotify" -> {
+                    val encoded = Uri.encode(cmd.query)
+                    val intent = Intent(Intent.ACTION_VIEW, Uri.parse("spotify:search:$encoded")).apply {
+                        flags = Intent.FLAG_ACTIVITY_NEW_TASK
+                    }
+                    try {
+                        context.startActivity(intent)
+                    } catch (_: Exception) {
+                        val webIntent = Intent(Intent.ACTION_VIEW, Uri.parse("https://open.spotify.com/search/$encoded")).apply {
+                            flags = Intent.FLAG_ACTIVITY_NEW_TASK
+                        }
+                        context.startActivity(webIntent)
+                    }
+                    VoiceCommandResult.Handled("Searching for \"${cmd.query}\" on Spotify...")
+                }
+                "playstore" -> {
+                    val encoded = Uri.encode(cmd.query)
+                    val intent = Intent(Intent.ACTION_VIEW, Uri.parse("market://search?q=$encoded")).apply {
+                        flags = Intent.FLAG_ACTIVITY_NEW_TASK
+                    }
+                    try {
+                        context.startActivity(intent)
+                    } catch (_: Exception) {
+                        val webIntent = Intent(Intent.ACTION_VIEW, Uri.parse("https://play.google.com/store/search?q=$encoded")).apply {
+                            flags = Intent.FLAG_ACTIVITY_NEW_TASK
+                        }
+                        context.startActivity(webIntent)
+                    }
+                    VoiceCommandResult.Handled("Searching for \"${cmd.query}\" on Google Play Store...")
+                }
+                else -> {
+                    executeGoogleSearch(cmd.query, context)
+                }
+            }
+        } catch (e: Exception) {
+            VoiceCommandResult.Error("Could not perform search: ${e.localizedMessage}")
+        }
+    }
+
+    private fun executeGetBattery(context: Context): VoiceCommandResult {
+        return try {
+            val batteryIntent = context.registerReceiver(null, IntentFilter(Intent.ACTION_BATTERY_CHANGED))
+            val rawLevel = batteryIntent?.getIntExtra(BatteryManager.EXTRA_LEVEL, -1) ?: -1
+            val scale = batteryIntent?.getIntExtra(BatteryManager.EXTRA_SCALE, -1) ?: -1
+            val pct = if (rawLevel >= 0 && scale > 0) ((rawLevel / scale.toFloat()) * 100).toInt() else 100
+            val status = batteryIntent?.getIntExtra(BatteryManager.EXTRA_STATUS, -1) ?: -1
+            val isCharging = status == BatteryManager.BATTERY_STATUS_CHARGING || status == BatteryManager.BATTERY_STATUS_FULL
+            val statusStr = if (isCharging) "Charging" else "Not charging"
+            VoiceCommandResult.Handled("Battery is currently at $pct% ($statusStr).")
+        } catch (e: Exception) {
+            VoiceCommandResult.Error("Could not retrieve battery info: ${e.localizedMessage}")
+        }
+    }
+
+    private fun executeGetDate(): VoiceCommandResult {
+        val sdf = SimpleDateFormat("EEEE, d MMMM yyyy", Locale.getDefault())
+        val dateStr = sdf.format(Date())
+        return VoiceCommandResult.Handled("Today's date is $dateStr.")
+    }
+
+    private fun executeGetTime(): VoiceCommandResult {
+        val sdf = SimpleDateFormat("hh:mm a", Locale.getDefault())
+        val timeStr = sdf.format(Date())
+        return VoiceCommandResult.Handled("Current time is $timeStr.")
+    }
+
+    private fun executeToggleFlashlight(turnOn: Boolean?, context: Context): VoiceCommandResult {
+        return try {
+            val camManager = context.getSystemService(Context.CAMERA_SERVICE) as? CameraManager
+            val cameraId = camManager?.cameraIdList?.firstOrNull()
+            if (camManager != null && cameraId != null) {
+                val enable = turnOn ?: true
+                camManager.setTorchMode(cameraId, enable)
+                VoiceCommandResult.Handled(if (enable) "Flashlight turned on." else "Flashlight turned off.")
+            } else {
+                VoiceCommandResult.Error("Flashlight hardware not available.")
+            }
+        } catch (e: Exception) {
+            VoiceCommandResult.Error("Flashlight error: ${e.localizedMessage}")
         }
     }
 }

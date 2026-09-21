@@ -80,8 +80,11 @@ class InstalledAppRepository(private val context: Context) {
 
         // Well-known app aliases
         when {
-            lowerPkg.contains("youtube") || lowerLabel.contains("youtube") -> {
-                aliases.addAll(listOf("yt", "youtube", "you tube", "video"))
+            lowerPkg.contains("youtube.music") || (lowerLabel.contains("youtube") && lowerLabel.contains("music")) -> {
+                aliases.addAll(listOf("youtube music", "yt music", "ytmusic", "music", "gaana", "songs"))
+            }
+            lowerPkg == "com.google.android.youtube" || (lowerLabel == "youtube" || (lowerLabel.contains("youtube") && !lowerLabel.contains("music"))) -> {
+                aliases.addAll(listOf("youtube", "yt", "you tube", "video", "youtube app"))
             }
             lowerPkg.contains("whatsapp") || lowerLabel.contains("whatsapp") -> {
                 aliases.addAll(listOf("wa", "whatsapp", "whats app", "watsp", "watsapp"))

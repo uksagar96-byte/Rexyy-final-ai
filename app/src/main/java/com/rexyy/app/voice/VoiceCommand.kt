@@ -4,7 +4,12 @@ import com.rexyy.app.network.provider.AiProviderType
 
 sealed class VoiceCommand {
     data class OpenApp(val appName: String, val rawInput: String) : VoiceCommand()
+    data class AppSearch(val targetApp: String, val query: String, val searchType: String = "general", val rawInput: String) : VoiceCommand()
     data class GoogleSearch(val query: String, val rawInput: String) : VoiceCommand()
+    data class GetBattery(val rawInput: String) : VoiceCommand()
+    data class GetDate(val rawInput: String) : VoiceCommand()
+    data class GetTime(val rawInput: String) : VoiceCommand()
+    data class ToggleFlashlight(val turnOn: Boolean? = null, val rawInput: String) : VoiceCommand()
     data class SetAlarm(val hour: Int, val minute: Int, val message: String, val rawInput: String) : VoiceCommand()
     data class SetTimer(val seconds: Int, val message: String = "REXYY Timer", val rawInput: String) : VoiceCommand()
     data class OpenSettings(val subSettings: String = "", val rawInput: String) : VoiceCommand()
