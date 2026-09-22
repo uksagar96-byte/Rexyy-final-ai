@@ -92,6 +92,17 @@
             android:foregroundServiceType="microphone"
             android:exported="false" />
 
+        <!-- Notification Intelligence Listener Service -->
+        <service
+            android:name="com.rexyy.app.notifications.RexyyNotificationListenerService"
+            android:label="REXYY Notification Intelligence"
+            android:permission="android.permission.BIND_NOTIFICATION_LISTENER_SERVICE"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.service.notification.NotificationListenerService" />
+            </intent-filter>
+        </service>
+
     </application>
 
 </manifest>

@@ -12,8 +12,8 @@ object TaskPlanner {
         val trimmed = input.trim()
         val lower = trimmed.lowercase()
 
-        // Multi-step conjunctions: "and", "aur", "aur phir", "then", "phir"
-        val splitRegex = Regex("(?i)\\s+(and then|aur phir|and|aur|then|phir)\\s+")
+        // Multi-step conjunctions: "and", "aur", "aur phir", "then", "phir", commas, semicolons
+        val splitRegex = Regex("(?i)(\\s+(and then|aur phir|and|aur|then|phir)\\s+|[,;]\\s*)")
         val parts = trimmed.split(splitRegex).map { it.trim() }.filter { it.isNotBlank() }
 
         if (parts.size < 2) {
@@ -41,9 +41,9 @@ object TaskPlanner {
             return null
         }
 
-        // Limit to max 5 steps for safety
+        // Limit to max 8 steps for safety
         val validSteps = mutableListOf<TaskStep>()
-        for ((index, part) in parts.take(5).withIndex()) {
+        for ((index, part) in parts.take(8).withIndex()) {
             val cmd = parseSingleCommand(part)
             if (cmd !is VoiceCommand.AiChat) {
                 validSteps.add(

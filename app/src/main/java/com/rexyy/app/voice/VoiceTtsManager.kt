@@ -11,7 +11,7 @@ import java.util.UUID
 
 class VoiceTtsManager(
     private val context: Context,
-    private val onSpeakingStateChanged: (Boolean) -> Unit
+    private val onSpeakingStateChanged: (Boolean) -> Unit = {}
 ) : TextToSpeech.OnInitListener {
 
     private val mainHandler = Handler(Looper.getMainLooper())

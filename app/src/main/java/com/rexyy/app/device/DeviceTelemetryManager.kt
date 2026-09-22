@@ -26,6 +26,7 @@ import java.util.Date
 import java.util.Locale
 
 data class DeviceTelemetry(
+    val fps: Int = 60,
     val batteryPercent: Int = 100,
     val isCharging: Boolean = false,
     val chargingSource: String = "Battery",
@@ -54,10 +55,11 @@ class DeviceTelemetryManager(private val context: Context) {
     private val scope = CoroutineScope(Dispatchers.Default)
 
     init {
+        FpsMonitor.startTracking()
         scope.launch {
             while (isActive) {
                 _telemetry.value = fetchCurrentTelemetry()
-                delay(3000L) // Refresh every 3 seconds
+                delay(2000L) // Refresh every 2 seconds
             }
         }
     }
@@ -141,6 +143,7 @@ class DeviceTelemetryManager(private val context: Context) {
         val dateFormat = SimpleDateFormat("EEE, dd MMM yyyy", Locale.getDefault())
 
         return DeviceTelemetry(
+            fps = FpsMonitor.currentFps.value,
             batteryPercent = batteryPct,
             isCharging = isCharging,
             chargingSource = chargingSource,

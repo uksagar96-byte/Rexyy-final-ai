@@ -68,11 +68,49 @@ class RexyyAccessibilityService : AccessibilityService() {
 
     fun pressBack(): Boolean = performGlobalAction(GLOBAL_ACTION_BACK)
     fun pressHome(): Boolean = performGlobalAction(GLOBAL_ACTION_HOME)
+    fun pressRecentApps(): Boolean = performGlobalAction(GLOBAL_ACTION_RECENTS)
+
+    fun scrollForward(): Boolean {
+        val root = rootInActiveWindow ?: return false
+        return root.performAction(AccessibilityNodeInfo.ACTION_SCROLL_FORWARD)
+    }
+
+    fun scrollBackward(): Boolean {
+        val root = rootInActiveWindow ?: return false
+        return root.performAction(AccessibilityNodeInfo.ACTION_SCROLL_BACKWARD)
+    }
+
+    fun copy(node: AccessibilityNodeInfo?): Boolean {
+        return node?.performAction(AccessibilityNodeInfo.ACTION_COPY) ?: false
+    }
+
+    fun paste(node: AccessibilityNodeInfo?): Boolean {
+        return node?.performAction(AccessibilityNodeInfo.ACTION_PASTE) ?: false
+    }
 
     companion object {
         private var instance: WeakReference<RexyyAccessibilityService>? = null
 
         fun isServiceEnabled(): Boolean = instance?.get() != null
+
+        fun isAccessibilityServiceConfigured(context: Context): Boolean {
+            if (isServiceEnabled()) return true
+            return try {
+                val serviceName = "${context.packageName}/${RexyyAccessibilityService::class.java.canonicalName}"
+                val enabledServices = Settings.Secure.getString(
+                    context.contentResolver,
+                    Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES
+                ) ?: ""
+                val accessibilityEnabled = Settings.Secure.getInt(
+                    context.contentResolver,
+                    Settings.Secure.ACCESSIBILITY_ENABLED,
+                    0
+                )
+                accessibilityEnabled == 1 && enabledServices.contains(serviceName)
+            } catch (_: Exception) {
+                false
+            }
+        }
 
         fun getService(): RexyyAccessibilityService? = instance?.get()
 

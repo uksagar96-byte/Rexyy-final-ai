@@ -7,6 +7,15 @@ import com.rexyy.app.network.provider.AiProviderType
 import com.rexyy.app.task.TaskPlan
 import com.rexyy.app.voice.VoiceState
 
+enum class CommandPillState {
+    IDLE,
+    LISTENING,
+    WORKING,
+    SUCCESS,
+    ERROR,
+    BACKGROUND_ACTIVE
+}
+
 data class ChatUiState(
     val messages: List<ChatMessage> = emptyList(),
     val inputText: String = "",
@@ -33,6 +42,11 @@ data class ChatUiState(
     val assistantName: String = SecureStorage.DEFAULT_ASSISTANT_NAME,
     val isListening: Boolean = false,
     val lastActionFeedback: String? = null,
+    val lastRecognizedCommand: String? = null,
+    val commandPillState: CommandPillState = CommandPillState.IDLE,
+    val isRexyyActivated: Boolean = false,
+    val showActivationCinematic: Boolean = false,
+    val showIntroDialog: Boolean = false,
     val pendingConfirmation: ConfirmationRequest? = null,
     val pendingMessageTarget: Pair<String, Boolean>? = null, // targetName to isWhatsApp
     val activeTaskPlan: TaskPlan? = null

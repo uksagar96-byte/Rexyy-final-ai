@@ -51,6 +51,10 @@ class SecureStorage(
         private const val KEY_RESPONSE_STYLE = "response_style"
         private const val KEY_CUSTOM_INSTRUCTIONS = "custom_instructions"
 
+        private const val KEY_REXYY_ACTIVATED = "rexyy_activated"
+        private const val KEY_NOTIFICATION_ANNOUNCEMENT = "notification_announcement_enabled"
+        private const val KEY_CHARGING_ANNOUNCEMENT = "charging_announcement_enabled"
+
         const val DEFAULT_USER_NAME = "Commander"
         const val DEFAULT_ASSISTANT_NAME = "REXYY"
         const val DEFAULT_MODEL = "gpt-4o-mini"
@@ -409,5 +413,31 @@ class SecureStorage(
 
     fun setCustomInstructions(instructions: String) {
         prefs.edit().putString(KEY_CUSTOM_INSTRUCTIONS, instructions.trim()).apply()
+    }
+
+    // --- Activation & System Automation Preferences ---
+
+    fun isRexyyActivated(): Boolean {
+        return prefs.getBoolean(KEY_REXYY_ACTIVATED, false)
+    }
+
+    fun setRexyyActivated(activated: Boolean) {
+        prefs.edit().putBoolean(KEY_REXYY_ACTIVATED, activated).apply()
+    }
+
+    fun isNotificationAnnouncementEnabled(): Boolean {
+        return prefs.getBoolean(KEY_NOTIFICATION_ANNOUNCEMENT, true)
+    }
+
+    fun setNotificationAnnouncementEnabled(enabled: Boolean) {
+        prefs.edit().putBoolean(KEY_NOTIFICATION_ANNOUNCEMENT, enabled).apply()
+    }
+
+    fun isChargingAnnouncementEnabled(): Boolean {
+        return prefs.getBoolean(KEY_CHARGING_ANNOUNCEMENT, true)
+    }
+
+    fun setChargingAnnouncementEnabled(enabled: Boolean) {
+        prefs.edit().putBoolean(KEY_CHARGING_ANNOUNCEMENT, enabled).apply()
     }
 }

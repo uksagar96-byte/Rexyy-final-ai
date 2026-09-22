@@ -102,7 +102,11 @@ fun RexyyMainScreen(
                     onOpenDevConsole = { currentScreen = Screen.DevConsole },
                     onConfirmAction = { viewModel.confirmPendingAction() },
                     onCancelAction = { viewModel.cancelPendingAction() },
-                    onCancelTask = { viewModel.cancelActiveTask() }
+                    onCancelTask = { viewModel.cancelActiveTask() },
+                    onActivateRexyy = { viewModel.activateRexyy() },
+                    onDismissActivationCinematic = { viewModel.dismissActivationCinematic() },
+                    onReplayActivation = { viewModel.replayActivationCinematic() },
+                    onShowIntro = { viewModel.setShowIntroDialog(it) }
                 )
             }
 
@@ -187,6 +191,10 @@ fun RexyyMainScreen(
                     },
                     onClearAllHistory = {
                         viewModel.clearConversation()
+                    },
+                    onReplayActivation = {
+                        viewModel.replayActivationCinematic()
+                        currentScreen = Screen.MainAssistant
                     }
                 )
             }

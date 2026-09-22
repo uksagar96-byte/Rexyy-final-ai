@@ -38,6 +38,11 @@ sealed class VoiceCommand {
     data class RejectCall(val rawInput: String) : VoiceCommand()
     data class GetDeviceInfo(val rawInput: String) : VoiceCommand()
     data class MultiStepTask(val steps: List<VoiceCommand>, val description: String, val rawInput: String) : VoiceCommand()
+    data class AccessibilityAction(val actionType: ActionType, val argument: String = "", val rawInput: String) : VoiceCommand() {
+        enum class ActionType {
+            SCROLL_DOWN, SCROLL_UP, GO_BACK, GO_HOME, RECENTS, TYPE_TEXT, COPY, PASTE
+        }
+    }
     data class SetReminder(val title: String = "", val rawInput: String) : VoiceCommand()
     data class AiChat(val prompt: String, val providerOverride: AiProviderType? = null) : VoiceCommand()
 }

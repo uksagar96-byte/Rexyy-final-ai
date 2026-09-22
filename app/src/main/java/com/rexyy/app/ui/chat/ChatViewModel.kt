@@ -46,11 +46,13 @@ class ChatViewModel(
             _uiState.update {
                 it.copy(
                     voiceState = if (listening) VoiceState.LISTENING else if (it.voiceState == VoiceState.LISTENING) VoiceState.IDLE else it.voiceState,
-                    voiceStatusMessage = if (listening) "Listening... Speak now" else null
+                    voiceStatusMessage = if (listening) "Listening... Speak now" else null,
+                    commandPillState = if (listening) CommandPillState.LISTENING else if (it.commandPillState == CommandPillState.LISTENING) CommandPillState.IDLE else it.commandPillState
                 )
             }
         },
         onSpeechRecognized = { spokenText ->
+            _uiState.update { it.copy(lastRecognizedCommand = spokenText, commandPillState = CommandPillState.WORKING) }
             handleVoiceInput(spokenText)
         },
         onError = { errorMsg ->
@@ -58,7 +60,8 @@ class ChatViewModel(
                 it.copy(
                     voiceState = VoiceState.IDLE,
                     voiceStatusMessage = null,
-                    errorMessage = errorMsg
+                    errorMessage = errorMsg,
+                    commandPillState = CommandPillState.ERROR
                 )
             }
         }
@@ -94,7 +97,8 @@ class ChatViewModel(
             voiceLanguage = repository.getVoiceLanguage(),
             isSetupCompleted = repository.secureStorage.isSetupCompleted(),
             userName = repository.secureStorage.getUserName(),
-            assistantName = repository.secureStorage.getAssistantName()
+            assistantName = repository.secureStorage.getAssistantName(),
+            isRexyyActivated = repository.secureStorage.isRexyyActivated()
         )
     )
     val uiState: StateFlow<ChatUiState> = _uiState.asStateFlow()
@@ -674,6 +678,26 @@ class ChatViewModel(
 
     fun executeLocalAction(commandText: String, isVoice: Boolean = false) {
         processUnifiedInput(commandText, isVoice = isVoice)
+    }
+
+    fun activateRexyy() {
+        repository.secureStorage.setRexyyActivated(true)
+        _uiState.update { it.copy(isRexyyActivated = true, showActivationCinematic = true) }
+    }
+
+    fun dismissActivationCinematic() {
+        _uiState.update { it.copy(showActivationCinematic = false) }
+        viewModelScope.launch {
+            voiceTtsManager.speak("REXXY ACTIVATED. All systems online and operational.", _uiState.value.voiceLanguage)
+        }
+    }
+
+    fun replayActivationCinematic() {
+        _uiState.update { it.copy(showActivationCinematic = true) }
+    }
+
+    fun setShowIntroDialog(show: Boolean) {
+        _uiState.update { it.copy(showIntroDialog = show) }
     }
 
     override fun onCleared() {

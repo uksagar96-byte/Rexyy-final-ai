@@ -77,6 +77,7 @@ import com.rexyy.app.network.provider.AiProviderType
 import com.rexyy.app.service.BackgroundAssistantManager
 import com.rexyy.app.service.RexyyAssistantServiceState
 import com.rexyy.app.ui.theme.RexyyAmberWarning
+import com.rexyy.app.ui.theme.RexyyCyanLight
 import com.rexyy.app.ui.theme.RexyyCyanPrimary
 import com.rexyy.app.ui.theme.RexyyDarkBackground
 import com.rexyy.app.ui.theme.RexyyDarkBorder
@@ -121,6 +122,7 @@ fun SettingsScreen(
     onUpdateVoiceRepliesEnabled: (Boolean) -> Unit = {},
     onUpdateVoiceLanguage: (String) -> Unit = {},
     onClearAllHistory: () -> Unit,
+    onReplayActivation: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
@@ -214,6 +216,63 @@ fun SettingsScreen(
                 .padding(horizontal = 20.dp)
                 .verticalScroll(rememberScrollState())
         ) {
+            Spacer(modifier = Modifier.height(16.dp))
+
+            // ==========================================
+            // 0. REXYY ACTIVATION REPLAY
+            // ==========================================
+            Card(
+                colors = CardDefaults.cardColors(containerColor = RexyyDarkSurface),
+                border = BorderStroke(1.dp, RexyyDarkBorder),
+                shape = RoundedCornerShape(14.dp),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .testTag("activation_replay_card")
+            ) {
+                Column(modifier = Modifier.padding(16.dp)) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(
+                            imageVector = Icons.Outlined.AutoMode,
+                            contentDescription = "Activation",
+                            tint = RexyyCyanPrimary,
+                            modifier = Modifier.size(20.dp)
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(
+                            text = "REXXY Core Activation",
+                            style = MaterialTheme.typography.titleMedium.copy(
+                                fontWeight = FontWeight.SemiBold,
+                                color = RexyyTextPrimary
+                            )
+                        )
+                    }
+
+                    Spacer(modifier = Modifier.height(8.dp))
+
+                    Text(
+                        text = "Replay the holographic boot sequence or re-verify all local Android hardware capabilities.",
+                        style = MaterialTheme.typography.bodySmall.copy(color = RexyyTextSecondary)
+                    )
+
+                    Spacer(modifier = Modifier.height(12.dp))
+
+                    Button(
+                        onClick = onReplayActivation,
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = RexyyDarkSurfaceVariant,
+                            contentColor = RexyyCyanLight
+                        ),
+                        border = BorderStroke(1.dp, RexyyCyanPrimary),
+                        shape = RoundedCornerShape(10.dp),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .testTag("replay_activation_button")
+                    ) {
+                        Text("⚡ Replay REXYY Activation Sequence", fontWeight = FontWeight.Bold)
+                    }
+                }
+            }
+
             Spacer(modifier = Modifier.height(16.dp))
 
             // ==========================================

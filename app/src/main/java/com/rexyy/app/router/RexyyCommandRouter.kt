@@ -181,6 +181,10 @@ object RexyyCommandRouter {
             return VoiceCommand.SetReminder(title = title, rawInput = trimmed)
         }
 
+        // --- P. Accessibility System Actions ---
+        val accessCmd = parseAccessibilityAction(trimmed, lower)
+        if (accessCmd != null) return accessCmd
+
         // Default: Forward to Generative AI model
         return VoiceCommand.AiChat(prompt = trimmed)
     }
@@ -737,5 +741,38 @@ object RexyyCommandRouter {
             .replace("(?i)yaad dilao".toRegex(), "")
             .trim()
             .ifBlank { "Reminder" }
+    }
+
+    private fun parseAccessibilityAction(trimmed: String, lower: String): VoiceCommand.AccessibilityAction? {
+        if (lower == "scroll down" || lower.contains("neeche scroll") || lower.contains("scroll down")) {
+            return VoiceCommand.AccessibilityAction(VoiceCommand.AccessibilityAction.ActionType.SCROLL_DOWN, rawInput = trimmed)
+        }
+        if (lower == "scroll up" || lower.contains("upar scroll") || lower.contains("scroll up")) {
+            return VoiceCommand.AccessibilityAction(VoiceCommand.AccessibilityAction.ActionType.SCROLL_UP, rawInput = trimmed)
+        }
+        if (lower == "go back" || lower == "back" || lower == "back jao" || lower == "wapas jao" || lower == "back karo" || lower == "exit karo") {
+            return VoiceCommand.AccessibilityAction(VoiceCommand.AccessibilityAction.ActionType.GO_BACK, rawInput = trimmed)
+        }
+        if (lower == "go home" || lower == "home" || lower == "home jao" || lower == "home screen" || lower == "home par jao") {
+            return VoiceCommand.AccessibilityAction(VoiceCommand.AccessibilityAction.ActionType.GO_HOME, rawInput = trimmed)
+        }
+        if (lower == "recent apps" || lower == "recents" || lower == "recent apps kholo" || lower == "multitask") {
+            return VoiceCommand.AccessibilityAction(VoiceCommand.AccessibilityAction.ActionType.RECENTS, rawInput = trimmed)
+        }
+        if (lower == "copy" || lower == "copy karo") {
+            return VoiceCommand.AccessibilityAction(VoiceCommand.AccessibilityAction.ActionType.COPY, rawInput = trimmed)
+        }
+        if (lower == "paste" || lower == "paste karo") {
+            return VoiceCommand.AccessibilityAction(VoiceCommand.AccessibilityAction.ActionType.PASTE, rawInput = trimmed)
+        }
+        if (lower.startsWith("type ") || lower.startsWith("write ") || lower.contains(" likho") || lower.startsWith("likho ")) {
+            val text = trimmed.replace("(?i)^(type|write|likho)\\s+".toRegex(), "")
+                .replace("(?i)\\s+likho$".toRegex(), "")
+                .trim()
+            if (text.isNotBlank()) {
+                return VoiceCommand.AccessibilityAction(VoiceCommand.AccessibilityAction.ActionType.TYPE_TEXT, argument = text, rawInput = trimmed)
+            }
+        }
+        return null
     }
 }

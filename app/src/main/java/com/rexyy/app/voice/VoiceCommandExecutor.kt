@@ -71,6 +71,7 @@ object VoiceCommandExecutor {
                 is VoiceCommand.GoogleSearch -> executeGoogleSearch(command.query, context)
                 is VoiceCommand.SendMessage -> executeSendMessage(command, context)
                 is VoiceCommand.SetReminder -> executeSetReminder(command.title, context)
+                is VoiceCommand.AccessibilityAction -> executeAccessibilityAction(command, context)
                 is VoiceCommand.MultiStepTask -> VoiceCommandResult.Handled("Executing task: ${command.description}")
                 is VoiceCommand.AiChat -> VoiceCommandResult.ForwardToAi(command.prompt, command.providerOverride)
             }
@@ -223,12 +224,25 @@ object VoiceCommandExecutor {
     }
 
     private fun executeAdjustBrightness(cmd: VoiceCommand.AdjustBrightness, context: Context): VoiceCommandResult {
-        // Direct brightness modification requires WRITE_SETTINGS; otherwise launch Display Settings
         val canWrite = Settings.System.canWrite(context)
-        if (canWrite && cmd.percent != null) {
-            val value = (cmd.percent * 255 / 100).coerceIn(10, 255)
-            Settings.System.putInt(context.contentResolver, Settings.System.SCREEN_BRIGHTNESS, value)
-            return VoiceCommandResult.Handled("Brightness set to ${cmd.percent}%.")
+        if (canWrite) {
+            try {
+                val current = Settings.System.getInt(context.contentResolver, Settings.System.SCREEN_BRIGHTNESS, 128)
+                val targetValue = if (cmd.percent != null) {
+                    (cmd.percent * 255 / 100).coerceIn(10, 255)
+                } else if (cmd.raise == true) {
+                    (current + 45).coerceAtMost(255)
+                } else if (cmd.raise == false) {
+                    (current - 45).coerceAtLeast(15)
+                } else {
+                    current
+                }
+                Settings.System.putInt(context.contentResolver, Settings.System.SCREEN_BRIGHTNESS, targetValue)
+                val finalPct = (targetValue * 100 / 255)
+                return VoiceCommandResult.Handled("Brightness set to $finalPct%.")
+            } catch (e: Exception) {
+                // fallback to settings
+            }
         }
 
         val intent = Intent(Settings.ACTION_DISPLAY_SETTINGS).apply {
@@ -236,9 +250,43 @@ object VoiceCommandExecutor {
         }
         return try {
             context.startActivity(intent)
-            VoiceCommandResult.Handled("Opening display brightness settings...")
+            VoiceCommandResult.Handled("System settings write permission required for direct brightness. Opening display settings...")
         } catch (e: Exception) {
             VoiceCommandResult.Error("Unable to open display settings: ${e.localizedMessage}")
+        }
+    }
+
+    private fun executeAccessibilityAction(cmd: VoiceCommand.AccessibilityAction, context: Context): VoiceCommandResult {
+        if (!com.rexyy.app.accessibility.RexyyAccessibilityService.isServiceEnabled()) {
+            com.rexyy.app.accessibility.RexyyAccessibilityService.openAccessibilitySettings(context)
+            return VoiceCommandResult.Handled("Accessibility service permission required. Opening Accessibility Settings...")
+        }
+
+        val success = when (cmd.actionType) {
+            VoiceCommand.AccessibilityAction.ActionType.SCROLL_DOWN -> com.rexyy.app.accessibility.AccessibilityActionExecutor.scroll(true)
+            VoiceCommand.AccessibilityAction.ActionType.SCROLL_UP -> com.rexyy.app.accessibility.AccessibilityActionExecutor.scroll(false)
+            VoiceCommand.AccessibilityAction.ActionType.GO_BACK -> com.rexyy.app.accessibility.AccessibilityActionExecutor.pressBack()
+            VoiceCommand.AccessibilityAction.ActionType.GO_HOME -> com.rexyy.app.accessibility.AccessibilityActionExecutor.pressHome()
+            VoiceCommand.AccessibilityAction.ActionType.RECENTS -> com.rexyy.app.accessibility.AccessibilityActionExecutor.pressRecentApps()
+            VoiceCommand.AccessibilityAction.ActionType.TYPE_TEXT -> com.rexyy.app.accessibility.AccessibilityActionExecutor.inputText(cmd.argument)
+            VoiceCommand.AccessibilityAction.ActionType.COPY -> com.rexyy.app.accessibility.AccessibilityActionExecutor.copy()
+            VoiceCommand.AccessibilityAction.ActionType.PASTE -> com.rexyy.app.accessibility.AccessibilityActionExecutor.paste()
+        }
+
+        return if (success) {
+            val label = when (cmd.actionType) {
+                VoiceCommand.AccessibilityAction.ActionType.SCROLL_DOWN -> "Scrolled down."
+                VoiceCommand.AccessibilityAction.ActionType.SCROLL_UP -> "Scrolled up."
+                VoiceCommand.AccessibilityAction.ActionType.GO_BACK -> "Went back."
+                VoiceCommand.AccessibilityAction.ActionType.GO_HOME -> "Returned to home screen."
+                VoiceCommand.AccessibilityAction.ActionType.RECENTS -> "Opened recent apps."
+                VoiceCommand.AccessibilityAction.ActionType.TYPE_TEXT -> "Typed: ${cmd.argument}."
+                VoiceCommand.AccessibilityAction.ActionType.COPY -> "Text copied."
+                VoiceCommand.AccessibilityAction.ActionType.PASTE -> "Text pasted."
+            }
+            VoiceCommandResult.Handled(label)
+        } else {
+            VoiceCommandResult.Error("Could not perform accessibility action on active screen.")
         }
     }
 

@@ -58,6 +58,9 @@ object CapabilityManager {
         }
         val isRooted = isRootAvailable()
         val isA11y = isAccessibilityEnabled(context)
+        val hasNotificationAccess = com.rexyy.app.notifications.RexyyNotificationListenerService.isNotificationAccessEnabled(context)
+        val canWriteSettings = Settings.System.canWrite(context)
+        val hasSms = hasPermission(context, Manifest.permission.SEND_SMS)
 
         return listOf(
             DeviceCapability(
@@ -67,6 +70,26 @@ object CapabilityManager {
                 status = if (hasMic) CapabilityStatus.AVAILABLE else CapabilityStatus.PERMISSION_REQUIRED,
                 requiresPermission = true,
                 requiredPermissionName = Manifest.permission.RECORD_AUDIO
+            ),
+            DeviceCapability(
+                id = "notif_access",
+                name = "Notification Intelligence",
+                description = "Reads incoming notifications to announce sender and content in selected language",
+                status = if (hasNotificationAccess) CapabilityStatus.AVAILABLE else CapabilityStatus.PERMISSION_REQUIRED
+            ),
+            DeviceCapability(
+                id = "write_settings",
+                name = "Modify System Settings",
+                description = "Allows programmatic brightness control without opening system settings",
+                status = if (canWriteSettings) CapabilityStatus.AVAILABLE else CapabilityStatus.PERMISSION_REQUIRED
+            ),
+            DeviceCapability(
+                id = "sms",
+                name = "SMS & Messaging",
+                description = "Sends text messages directly upon voice confirmation",
+                status = if (hasSms) CapabilityStatus.AVAILABLE else CapabilityStatus.PERMISSION_REQUIRED,
+                requiresPermission = true,
+                requiredPermissionName = Manifest.permission.SEND_SMS
             ),
             DeviceCapability(
                 id = "contacts",

@@ -20,4 +20,50 @@ object AccessibilityActionExecutor {
         }
         return false
     }
+
+    fun scroll(down: Boolean): Boolean {
+        val service = RexyyAccessibilityService.getService() ?: return false
+        return if (down) service.scrollForward() else service.scrollBackward()
+    }
+
+    fun pressBack(): Boolean {
+        return RexyyAccessibilityService.getService()?.pressBack() ?: false
+    }
+
+    fun pressHome(): Boolean {
+        return RexyyAccessibilityService.getService()?.pressHome() ?: false
+    }
+
+    fun pressRecentApps(): Boolean {
+        return RexyyAccessibilityService.getService()?.pressRecentApps() ?: false
+    }
+
+    fun clickByText(text: String): Boolean {
+        val service = RexyyAccessibilityService.getService() ?: return false
+        val node = service.findNodeByText(text)
+        return service.clickNode(node)
+    }
+
+    fun inputText(text: String): Boolean {
+        val service = RexyyAccessibilityService.getService() ?: return false
+        val root = service.rootInActiveWindow ?: return false
+        val focused = root.findFocus(android.view.accessibility.AccessibilityNodeInfo.FOCUS_INPUT)
+        return if (focused != null) {
+            service.inputText(focused, text)
+        } else false
+    }
+
+    fun copy(): Boolean {
+        val service = RexyyAccessibilityService.getService() ?: return false
+        val root = service.rootInActiveWindow ?: return false
+        val focused = root.findFocus(android.view.accessibility.AccessibilityNodeInfo.FOCUS_INPUT)
+        return service.copy(focused)
+    }
+
+    fun paste(): Boolean {
+        val service = RexyyAccessibilityService.getService() ?: return false
+        val root = service.rootInActiveWindow ?: return false
+        val focused = root.findFocus(android.view.accessibility.AccessibilityNodeInfo.FOCUS_INPUT)
+        return service.paste(focused)
+    }
 }

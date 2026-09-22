@@ -1,8 +1,11 @@
 package com.rexyy.app.telecom
 
 import android.content.Context
+import android.os.Build
 import android.telephony.PhoneStateListener
+import android.telephony.TelephonyCallback
 import android.telephony.TelephonyManager
+import androidx.annotation.RequiresApi
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -27,6 +30,7 @@ class CallStateManager(private val context: Context) {
 
     private var telephonyManager: TelephonyManager? = null
     private var phoneStateListener: PhoneStateListener? = null
+    private var telephonyCallback: Any? = null
 
     init {
         try {
@@ -37,31 +41,63 @@ class CallStateManager(private val context: Context) {
 
     private fun registerListener() {
         try {
-            @Suppress("DEPRECATION")
-            phoneStateListener = object : PhoneStateListener() {
-                @Deprecated("Deprecated in Java")
-                override fun onCallStateChanged(state: Int, phoneNumber: String?) {
-                    when (state) {
-                        TelephonyManager.CALL_STATE_RINGING -> {
-                            val resolvedName = CallerIdentityResolver.resolveCallerName(context, phoneNumber)
-                            _callStatus.value = CallStatus(
-                                state = TelephonyState.RINGING,
-                                callerName = resolvedName,
-                                phoneNumber = phoneNumber
-                            )
-                        }
-                        TelephonyManager.CALL_STATE_OFFHOOK -> {
-                            _callStatus.value = _callStatus.value.copy(state = TelephonyState.ACTIVE)
-                        }
-                        TelephonyManager.CALL_STATE_IDLE -> {
-                            _callStatus.value = CallStatus(state = TelephonyState.IDLE)
-                        }
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                registerTelephonyCallbackApi31()
+            } else {
+                registerLegacyPhoneStateListener()
+            }
+        } catch (_: Exception) {}
+    }
+
+    @RequiresApi(Build.VERSION_CODES.S)
+    private fun registerTelephonyCallbackApi31() {
+        val callback = object : TelephonyCallback(), TelephonyCallback.CallStateListener {
+            override fun onCallStateChanged(state: Int) {
+                when (state) {
+                    TelephonyManager.CALL_STATE_RINGING -> {
+                        _callStatus.value = CallStatus(
+                            state = TelephonyState.RINGING,
+                            callerName = "Incoming Call",
+                            phoneNumber = null
+                        )
+                    }
+                    TelephonyManager.CALL_STATE_OFFHOOK -> {
+                        _callStatus.value = _callStatus.value.copy(state = TelephonyState.ACTIVE)
+                    }
+                    TelephonyManager.CALL_STATE_IDLE -> {
+                        _callStatus.value = CallStatus(state = TelephonyState.IDLE)
                     }
                 }
             }
-            @Suppress("DEPRECATION")
-            telephonyManager?.listen(phoneStateListener, PhoneStateListener.LISTEN_CALL_STATE)
-        } catch (_: Exception) {}
+        }
+        telephonyCallback = callback
+        telephonyManager?.registerTelephonyCallback(context.mainExecutor, callback)
+    }
+
+    @Suppress("DEPRECATION")
+    private fun registerLegacyPhoneStateListener() {
+        phoneStateListener = object : PhoneStateListener() {
+            @Deprecated("Deprecated in Java")
+            override fun onCallStateChanged(state: Int, phoneNumber: String?) {
+                when (state) {
+                    TelephonyManager.CALL_STATE_RINGING -> {
+                        val resolvedName = CallerIdentityResolver.resolveCallerName(context, phoneNumber)
+                        _callStatus.value = CallStatus(
+                            state = TelephonyState.RINGING,
+                            callerName = resolvedName,
+                            phoneNumber = phoneNumber
+                        )
+                    }
+                    TelephonyManager.CALL_STATE_OFFHOOK -> {
+                        _callStatus.value = _callStatus.value.copy(state = TelephonyState.ACTIVE)
+                    }
+                    TelephonyManager.CALL_STATE_IDLE -> {
+                        _callStatus.value = CallStatus(state = TelephonyState.IDLE)
+                    }
+                }
+            }
+        }
+        telephonyManager?.listen(phoneStateListener, PhoneStateListener.LISTEN_CALL_STATE)
     }
 
     fun getCurrentRingingCallerAnnouncement(languageSetting: String = com.rexyy.app.data.local.SecureStorage.VOICE_LANG_DEFAULT): String {
@@ -87,9 +123,17 @@ class CallStateManager(private val context: Context) {
 
     fun release() {
         try {
-            @Suppress("DEPRECATION")
-            phoneStateListener?.let {
-                telephonyManager?.listen(it, PhoneStateListener.LISTEN_NONE)
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                (telephonyCallback as? TelephonyCallback)?.let {
+                    telephonyManager?.unregisterTelephonyCallback(it)
+                }
+                telephonyCallback = null
+            } else {
+                @Suppress("DEPRECATION")
+                phoneStateListener?.let {
+                    telephonyManager?.listen(it, PhoneStateListener.LISTEN_NONE)
+                }
+                phoneStateListener = null
             }
         } catch (_: Exception) {}
     }
