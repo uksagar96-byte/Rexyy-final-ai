@@ -13,6 +13,7 @@ class InstalledAppRepository(private val context: Context) {
     private val cacheTtlMs: Long = 60_000L // 1 minute TTL
 
     suspend fun getInstalledApps(forceRefresh: Boolean = false): List<AppInfo> = withContext(Dispatchers.IO) {
+        testAppsOverride?.let { return@withContext it }
         val now = System.currentTimeMillis()
         if (!forceRefresh && cachedApps != null && (now - lastCacheTime) < cacheTtlMs) {
             return@withContext cachedApps!!
@@ -134,5 +135,13 @@ class InstalledAppRepository(private val context: Context) {
         }
 
         return aliases.distinct()
+    }
+
+    companion object {
+        private var testAppsOverride: List<AppInfo>? = null
+
+        fun setTestApps(apps: List<AppInfo>?) {
+            testAppsOverride = apps
+        }
     }
 }

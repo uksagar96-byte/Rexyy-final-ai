@@ -201,7 +201,11 @@ fun RexyyMainScreen(
 
             is Screen.PermissionCenter -> {
                 PermissionCenterScreen(
-                    onNavigateBack = { currentScreen = Screen.MainAssistant }
+                    onNavigateBack = { currentScreen = Screen.MainAssistant },
+                    onActivateRexyy = {
+                        viewModel.activateRexyy()
+                    },
+                    isRexyyActivated = uiState.isRexyyActivated
                 )
             }
 

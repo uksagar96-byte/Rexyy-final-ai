@@ -4,6 +4,7 @@ import com.rexyy.app.network.provider.AiProviderType
 
 sealed class VoiceCommand {
     data class OpenApp(val appName: String, val rawInput: String) : VoiceCommand()
+    data class CloseApp(val target: String = "home", val rawInput: String) : VoiceCommand()
     data class AppSearch(val targetApp: String, val query: String, val searchType: String = "general", val rawInput: String) : VoiceCommand()
     data class GoogleSearch(val query: String, val rawInput: String) : VoiceCommand()
     data class GetBattery(val rawInput: String) : VoiceCommand()
@@ -40,7 +41,8 @@ sealed class VoiceCommand {
     data class MultiStepTask(val steps: List<VoiceCommand>, val description: String, val rawInput: String) : VoiceCommand()
     data class AccessibilityAction(val actionType: ActionType, val argument: String = "", val rawInput: String) : VoiceCommand() {
         enum class ActionType {
-            SCROLL_DOWN, SCROLL_UP, GO_BACK, GO_HOME, RECENTS, TYPE_TEXT, COPY, PASTE
+            SCROLL_DOWN, SCROLL_UP, GO_BACK, GO_HOME, RECENTS, TYPE_TEXT, COPY, PASTE,
+            REPLACE_TEXT, CLICK_NODE, SUBMIT_SEARCH
         }
     }
     data class SetReminder(val title: String = "", val rawInput: String) : VoiceCommand()

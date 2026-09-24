@@ -7,7 +7,10 @@ import java.net.URLEncoder
 
 object AppLauncher {
 
+    var testLaunchOverride: ((String) -> Boolean)? = null
+
     fun launchApp(context: Context, app: AppInfo): Boolean {
+        testLaunchOverride?.let { return it(app.packageName) }
         val pm = context.packageManager
         val intent = pm.getLaunchIntentForPackage(app.packageName) ?: run {
             if (app.activityName != null) {

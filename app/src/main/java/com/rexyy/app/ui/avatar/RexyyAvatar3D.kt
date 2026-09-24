@@ -52,7 +52,7 @@ import kotlin.math.sin
 fun RexyyAvatar3D(
     state: AssistantState,
     modifier: Modifier = Modifier,
-    size: Dp = 220.dp,
+    size: Dp = 250.dp,
     onClick: () -> Unit = {}
 ) {
     val infiniteTransition = rememberInfiniteTransition(label = "avatar_anim")
@@ -65,11 +65,11 @@ fun RexyyAvatar3D(
             animation = tween(
                 durationMillis = when (state) {
                     AssistantState.THINKING -> 2000
-                    AssistantState.WORKING -> 3000
-                    AssistantState.LISTENING -> 4000
-                    AssistantState.SPEAKING -> 3500
-                    AssistantState.ERROR -> 12000
-                    else -> 8000
+                    AssistantState.WORKING -> 2800
+                    AssistantState.LISTENING -> 3500
+                    AssistantState.SPEAKING -> 3200
+                    AssistantState.ERROR -> 10000
+                    else -> 7500
                 },
                 easing = LinearEasing
             ),
@@ -85,9 +85,9 @@ fun RexyyAvatar3D(
         animationSpec = infiniteRepeatable(
             animation = tween(
                 durationMillis = when (state) {
-                    AssistantState.THINKING -> 3000
-                    AssistantState.WORKING -> 4500
-                    else -> 10000
+                    AssistantState.THINKING -> 2800
+                    AssistantState.WORKING -> 4000
+                    else -> 9000
                 },
                 easing = LinearEasing
             ),
@@ -98,15 +98,15 @@ fun RexyyAvatar3D(
 
     // Breathing pulse
     val pulse by infiniteTransition.animateFloat(
-        initialValue = 0.88f,
-        targetValue = 1.12f,
+        initialValue = 0.90f,
+        targetValue = 1.10f,
         animationSpec = infiniteRepeatable(
             animation = tween(
                 durationMillis = when (state) {
-                    AssistantState.LISTENING -> 800
-                    AssistantState.SPEAKING -> 600
-                    AssistantState.ERROR -> 500
-                    else -> 1800
+                    AssistantState.LISTENING -> 750
+                    AssistantState.SPEAKING -> 550
+                    AssistantState.ERROR -> 450
+                    else -> 1700
                 },
                 easing = FastOutSlowInEasing
             ),
@@ -121,7 +121,7 @@ fun RexyyAvatar3D(
         targetValue = 1.4f,
         animationSpec = infiniteRepeatable(
             animation = tween(
-                durationMillis = if (state == AssistantState.LISTENING || state == AssistantState.SPEAKING) 1200 else 2400,
+                durationMillis = if (state == AssistantState.LISTENING || state == AssistantState.SPEAKING) 1100 else 2200,
                 easing = FastOutSlowInEasing
             ),
             repeatMode = RepeatMode.Restart
@@ -131,13 +131,13 @@ fun RexyyAvatar3D(
 
     // Color theme based on state
     val (primaryColor, secondaryColor, coreColor) = when (state) {
-        AssistantState.IDLE -> Triple(RexyyCyanPrimary, RexyyCyanLight, Color(0xFF003040))
+        AssistantState.IDLE -> Triple(RexyyCyanPrimary, RexyyCyanLight, Color(0xFF002936))
         AssistantState.LISTENING -> Triple(RexyyCyanLight, Color(0xFF80DEEA), Color(0xFF004D61))
-        AssistantState.THINKING -> Triple(Color(0xFFB388FF), Color(0xFF7C4DFF), Color(0xFF311B92))
-        AssistantState.SPEAKING -> Triple(RexyyNeonGreen, Color(0xFFB9F6CA), Color(0xFF004D40))
-        AssistantState.WORKING -> Triple(Color(0xFFFFB74D), Color(0xFFFF9800), Color(0xFFE65100))
-        AssistantState.SUCCESS -> Triple(RexyyNeonGreen, Color(0xFF69F0AE), Color(0xFF1B5E20))
-        AssistantState.ERROR -> Triple(RexyyErrorRed, Color(0xFFFF8A80), Color(0xFFB71C1C))
+        AssistantState.THINKING -> Triple(Color(0xFFB388FF), Color(0xFF7C4DFF), Color(0xFF261266))
+        AssistantState.SPEAKING -> Triple(RexyyNeonGreen, Color(0xFFB9F6CA), Color(0xFF00382E))
+        AssistantState.WORKING -> Triple(Color(0xFFFFB74D), Color(0xFFFF9800), Color(0xFFB23B00))
+        AssistantState.SUCCESS -> Triple(RexyyNeonGreen, Color(0xFF69F0AE), Color(0xFF144D1A))
+        AssistantState.ERROR -> Triple(RexyyErrorRed, Color(0xFFFF8A80), Color(0xFF8E1111))
     }
 
     Box(
@@ -151,9 +151,32 @@ fun RexyyAvatar3D(
             ),
         contentAlignment = Alignment.Center
     ) {
-        Canvas(modifier = Modifier.fillMaxSize().padding(12.dp)) {
+        Canvas(modifier = Modifier.fillMaxSize().padding(14.dp)) {
             val center = Offset(size.toPx() / 2f, size.toPx() / 2f)
-            val radius = (size.toPx() / 2f) * 0.55f
+            val radius = (size.toPx() / 2f) * 0.54f
+
+            // 0. Subtle Tech Calibration Ring & Compass Ticks
+            val outerRingRadius = radius * 1.58f
+            drawCircle(
+                color = primaryColor.copy(alpha = 0.18f),
+                radius = outerRingRadius,
+                center = center,
+                style = Stroke(width = 1.dp.toPx())
+            )
+            // 8 Cardinal Precision Ticks
+            for (i in 0 until 8) {
+                val tickAngle = Math.toRadians((i * 45.0) + (rotation * 0.25f))
+                val cosA = cos(tickAngle).toFloat()
+                val sinA = sin(tickAngle).toFloat()
+                val tickStart = Offset(center.x + (outerRingRadius - 4.dp.toPx()) * cosA, center.y + (outerRingRadius - 4.dp.toPx()) * sinA)
+                val tickEnd = Offset(center.x + (outerRingRadius + 4.dp.toPx()) * cosA, center.y + (outerRingRadius + 4.dp.toPx()) * sinA)
+                drawLine(
+                    color = primaryColor.copy(alpha = 0.4f),
+                    start = tickStart,
+                    end = tickEnd,
+                    strokeWidth = 1.5.dp.toPx()
+                )
+            }
 
             // 1. Outermost Ambient Glow & Waves (State Reactive)
             if (state == AssistantState.LISTENING || state == AssistantState.SPEAKING || state == AssistantState.WORKING) {
@@ -183,67 +206,95 @@ fun RexyyAvatar3D(
             drawCircle(
                 brush = Brush.radialGradient(
                     colors = listOf(
-                        primaryColor.copy(alpha = 0.45f),
-                        primaryColor.copy(alpha = 0.15f),
+                        primaryColor.copy(alpha = 0.40f),
+                        primaryColor.copy(alpha = 0.12f),
                         Color.Transparent
                     ),
                     center = center,
-                    radius = radius * 1.6f * pulse
+                    radius = radius * 1.55f * pulse
                 ),
-                radius = radius * 1.5f * pulse,
+                radius = radius * 1.48f * pulse,
                 center = center
             )
 
-            // 3. Orbiting Gyro Rings (3D Perspective tilt)
+            // 3. Orbiting Gyro Ring A (Horizontal Ellipse)
             rotate(degrees = rotation, pivot = center) {
                 drawOval(
                     brush = Brush.sweepGradient(
                         colors = listOf(
-                            primaryColor.copy(alpha = 0.9f),
-                            secondaryColor.copy(alpha = 0.1f),
-                            primaryColor.copy(alpha = 0.8f),
-                            secondaryColor.copy(alpha = 0.2f),
-                            primaryColor.copy(alpha = 0.9f)
+                            primaryColor.copy(alpha = 0.95f),
+                            secondaryColor.copy(alpha = 0.12f),
+                            primaryColor.copy(alpha = 0.85f),
+                            secondaryColor.copy(alpha = 0.18f),
+                            primaryColor.copy(alpha = 0.95f)
                         ),
                         center = center
                     ),
-                    topLeft = Offset(center.x - radius * 1.25f, center.y - radius * 0.45f),
-                    size = androidx.compose.ui.geometry.Size(radius * 2.5f, radius * 0.9f),
-                    style = Stroke(width = 3.dp.toPx(), cap = StrokeCap.Round)
+                    topLeft = Offset(center.x - radius * 1.30f, center.y - radius * 0.48f),
+                    size = androidx.compose.ui.geometry.Size(radius * 2.6f, radius * 0.96f),
+                    style = Stroke(width = 2.5.dp.toPx(), cap = StrokeCap.Round)
                 )
 
-                // Gyro particle dots
+                // Leading Quantum particle node
                 val dotAngle = Math.toRadians(rotation.toDouble())
-                val dotX = center.x + (radius * 1.25f) * cos(dotAngle).toFloat()
-                val dotY = center.y + (radius * 0.45f) * sin(dotAngle).toFloat()
+                val dotX = center.x + (radius * 1.30f) * cos(dotAngle).toFloat()
+                val dotY = center.y + (radius * 0.48f) * sin(dotAngle).toFloat()
                 drawCircle(
                     color = Color.White,
-                    radius = 4.dp.toPx(),
+                    radius = 4.5.dp.toPx(),
+                    center = Offset(dotX, dotY)
+                )
+                drawCircle(
+                    color = primaryColor.copy(alpha = 0.5f),
+                    radius = 8.dp.toPx(),
                     center = Offset(dotX, dotY)
                 )
             }
 
-            // 4. Secondary Counter-Rotating Gyro Ring
+            // 4. Secondary Counter-Rotating Gyro Ring B (Vertical Ellipse)
             rotate(degrees = reverseRotation, pivot = center) {
                 drawOval(
                     brush = Brush.sweepGradient(
                         colors = listOf(
-                            secondaryColor.copy(alpha = 0.7f),
+                            secondaryColor.copy(alpha = 0.75f),
                             Color.Transparent,
-                            secondaryColor.copy(alpha = 0.8f),
+                            secondaryColor.copy(alpha = 0.85f),
                             Color.Transparent,
-                            secondaryColor.copy(alpha = 0.7f)
+                            secondaryColor.copy(alpha = 0.75f)
                         ),
                         center = center
                     ),
-                    topLeft = Offset(center.x - radius * 0.5f, center.y - radius * 1.25f),
-                    size = androidx.compose.ui.geometry.Size(radius * 1.0f, radius * 2.5f),
+                    topLeft = Offset(center.x - radius * 0.52f, center.y - radius * 1.30f),
+                    size = androidx.compose.ui.geometry.Size(radius * 1.04f, radius * 2.6f),
                     style = Stroke(width = 2.dp.toPx(), cap = StrokeCap.Round)
+                )
+
+                // Secondary particle
+                val revDotAngle = Math.toRadians((reverseRotation * 1.2).toDouble())
+                val rDotX = center.x + (radius * 0.52f) * cos(revDotAngle).toFloat()
+                val rDotY = center.y + (radius * 1.30f) * sin(revDotAngle).toFloat()
+                drawCircle(
+                    color = Color.White.copy(alpha = 0.9f),
+                    radius = 3.5.dp.toPx(),
+                    center = Offset(rDotX, rDotY)
+                )
+            }
+
+            // 4b. Subtle Quantum Particle Cloud (8 particles drifting in synchronized orbit)
+            for (p in 0 until 6) {
+                val pAngle = Math.toRadians(((rotation * (0.8 + p * 0.15)) + (p * 60.0)))
+                val pDist = radius * (1.18f + 0.15f * sin((rotation * 0.05f + p).toDouble()).toFloat())
+                val px = center.x + pDist * cos(pAngle).toFloat()
+                val py = center.y + pDist * 0.82f * sin(pAngle).toFloat()
+                drawCircle(
+                    color = if (p % 2 == 0) primaryColor.copy(alpha = 0.7f) else secondaryColor.copy(alpha = 0.6f),
+                    radius = 2.5.dp.toPx(),
+                    center = Offset(px, py)
                 )
             }
 
             // 5. Deep 3D Volumetric Core Sphere
-            val corePulseRadius = radius * (0.85f * pulse)
+            val corePulseRadius = radius * (0.86f * pulse)
             drawCircle(
                 brush = Brush.radialGradient(
                     colors = listOf(

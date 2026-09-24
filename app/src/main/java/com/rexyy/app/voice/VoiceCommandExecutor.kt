@@ -1,5 +1,6 @@
 package com.rexyy.app.voice
 
+import android.app.ActivityManager
 import android.app.SearchManager
 import android.content.Context
 import android.content.Intent
@@ -17,6 +18,10 @@ import android.provider.Settings
 import com.rexyy.app.data.local.SecureStorage
 import com.rexyy.app.launcher.AppDiscoveryManager
 import com.rexyy.app.launcher.AppLaunchOutcome
+import com.rexyy.app.launcher.AppSearchManager
+import com.rexyy.app.launcher.AppSearchResult
+import com.rexyy.app.launcher.SearchVerificationStatus
+import com.rexyy.app.router.CommandDiagnosticLogger
 import com.rexyy.app.telecom.CallActionController
 import com.rexyy.app.telecom.CallStateManager
 import com.rexyy.app.telecom.CallerIdentityResolver
@@ -33,10 +38,15 @@ import java.util.Locale
 
 object VoiceCommandExecutor {
 
-    suspend fun execute(command: VoiceCommand, context: Context): VoiceCommandResult = withContext(Dispatchers.Main) {
-        return@withContext try {
+    @Volatile
+    private var lastAppSearchResult: AppSearchResult? = null
+
+    suspend fun execute(command: VoiceCommand, context: Context): VoiceCommandResult {
+        val startTime = System.currentTimeMillis()
+        val result = try {
             when (command) {
                 is VoiceCommand.OpenApp -> executeOpenApp(command.appName, context)
+                is VoiceCommand.CloseApp -> executeCloseApp(command, context)
                 is VoiceCommand.AppSearch -> executeAppSearch(command, context)
                 is VoiceCommand.GetBattery -> executeGetBattery(context)
                 is VoiceCommand.GetDate -> executeGetDate()
@@ -53,7 +63,7 @@ object VoiceCommandExecutor {
                 is VoiceCommand.AdjustBrightness -> executeAdjustBrightness(command, context)
                 is VoiceCommand.BluetoothSettings -> executeBluetoothSettings(command.turnOn, context)
                 is VoiceCommand.WifiSettings -> executeWifiSettings(context)
-                is VoiceCommand.OpenSettings -> executeOpenSettings(context)
+                is VoiceCommand.OpenSettings -> executeOpenSettings(command.subSettings, context)
                 is VoiceCommand.OpenCamera -> executeOpenCamera(context)
                 is VoiceCommand.OpenCalendar -> executeOpenCalendar(context)
                 is VoiceCommand.OpenContacts -> executeOpenContacts(context)
@@ -72,29 +82,192 @@ object VoiceCommandExecutor {
                 is VoiceCommand.SendMessage -> executeSendMessage(command, context)
                 is VoiceCommand.SetReminder -> executeSetReminder(command.title, context)
                 is VoiceCommand.AccessibilityAction -> executeAccessibilityAction(command, context)
-                is VoiceCommand.MultiStepTask -> VoiceCommandResult.Handled("Executing task: ${command.description}")
+                is VoiceCommand.MultiStepTask -> executeMultiStepTask(command, context)
                 is VoiceCommand.AiChat -> VoiceCommandResult.ForwardToAi(command.prompt, command.providerOverride)
             }
         } catch (e: Exception) {
             VoiceCommandResult.Error("Unable to complete action: ${e.localizedMessage ?: "Unknown error"}")
         }
+
+        val latencyMs = System.currentTimeMillis() - startTime
+        logDiagnostic(command, result, latencyMs)
+        return result
+    }
+
+    private fun logDiagnostic(command: VoiceCommand, result: VoiceCommandResult, latencyMs: Long) {
+        val raw = when (command) {
+            is VoiceCommand.OpenApp -> command.rawInput
+            is VoiceCommand.CloseApp -> command.rawInput
+            is VoiceCommand.AppSearch -> command.rawInput
+            is VoiceCommand.GoogleSearch -> command.rawInput
+            is VoiceCommand.GetBattery -> command.rawInput
+            is VoiceCommand.GetDate -> command.rawInput
+            is VoiceCommand.GetTime -> command.rawInput
+            is VoiceCommand.ToggleFlashlight -> command.rawInput
+            is VoiceCommand.SetAlarm -> command.rawInput
+            is VoiceCommand.SetTimer -> command.rawInput
+            is VoiceCommand.OpenSettings -> command.rawInput
+            is VoiceCommand.BluetoothSettings -> command.rawInput
+            is VoiceCommand.WifiSettings -> command.rawInput
+            is VoiceCommand.AdjustVolume -> command.rawInput
+            is VoiceCommand.AdjustBrightness -> command.rawInput
+            is VoiceCommand.CallContact -> command.rawInput
+            is VoiceCommand.SendMessage -> command.rawInput
+            is VoiceCommand.WhatsAppMessage -> command.rawInput
+            is VoiceCommand.WhatsAppChat -> command.rawInput
+            is VoiceCommand.OpenWhatsApp -> command.rawInput
+            is VoiceCommand.OpenCamera -> command.rawInput
+            is VoiceCommand.OpenCalendar -> command.rawInput
+            is VoiceCommand.OpenContacts -> command.rawInput
+            is VoiceCommand.FindContact -> command.rawInput
+            is VoiceCommand.WakeWord -> command.rawInput
+            is VoiceCommand.CancelAlarm -> command.rawInput
+            is VoiceCommand.CancelTimer -> command.rawInput
+            is VoiceCommand.RepeatLast -> command.rawInput
+            is VoiceCommand.Stop -> command.rawInput
+            is VoiceCommand.WhatCanYouDo -> command.rawInput
+            is VoiceCommand.AreYouThere -> command.rawInput
+            is VoiceCommand.CheckCaller -> command.rawInput
+            is VoiceCommand.AnswerCall -> command.rawInput
+            is VoiceCommand.RejectCall -> command.rawInput
+            is VoiceCommand.GetDeviceInfo -> command.rawInput
+            is VoiceCommand.MultiStepTask -> command.rawInput
+            is VoiceCommand.AccessibilityAction -> command.rawInput
+            is VoiceCommand.SetReminder -> command.rawInput
+            is VoiceCommand.AiChat -> command.prompt
+        }
+
+        val intentName = command::class.simpleName ?: "UnknownIntent"
+
+        val entities = mutableMapOf<String, String>()
+        var detectedTargetApp: String? = null
+        var detectedSearchQuery: String? = null
+        var detectedLaunchMethod: String? = null
+        var detectedSearchMethod: String? = null
+        var specificVerification: String? = null
+        var specificFailureReason: String? = null
+
+        when (command) {
+            is VoiceCommand.OpenApp -> {
+                entities["appName"] = command.appName
+                entities["targetApp"] = command.appName
+                detectedTargetApp = command.appName
+                detectedLaunchMethod = "LAUNCH_INTENT"
+            }
+            is VoiceCommand.CloseApp -> entities["target"] = command.target
+            is VoiceCommand.AppSearch -> {
+                entities["targetApp"] = command.targetApp
+                entities["query"] = command.query
+                detectedTargetApp = command.targetApp
+                detectedSearchQuery = command.query
+                val searchRes = lastAppSearchResult
+                if (searchRes != null && searchRes.extractedQuery == command.query) {
+                    detectedTargetApp = searchRes.targetApp
+                    detectedLaunchMethod = searchRes.launchMethod
+                    detectedSearchMethod = searchRes.searchMethod
+                    specificVerification = searchRes.verificationStatus.name
+                    specificFailureReason = searchRes.failureReason
+                    entities["launchMethod"] = searchRes.launchMethod
+                    entities["searchMethod"] = searchRes.searchMethod
+                    entities["verificationStatus"] = searchRes.verificationStatus.name
+                }
+            }
+            is VoiceCommand.GoogleSearch -> {
+                entities["query"] = command.query
+                detectedSearchQuery = command.query
+                detectedLaunchMethod = "WEB_INTENT"
+                detectedSearchMethod = "GOOGLE_SEARCH"
+            }
+            is VoiceCommand.ToggleFlashlight -> entities["turnOn"] = command.turnOn?.toString() ?: "toggle"
+            is VoiceCommand.SetAlarm -> {
+                entities["hour"] = command.hour.toString()
+                entities["minute"] = command.minute.toString()
+            }
+            is VoiceCommand.SetTimer -> entities["seconds"] = command.seconds.toString()
+            is VoiceCommand.OpenSettings -> entities["subSettings"] = command.subSettings
+            is VoiceCommand.AdjustVolume -> {
+                command.percent?.let { entities["percent"] = it.toString() }
+                entities["raise"] = command.raise.toString()
+                entities["mute"] = command.mute.toString()
+            }
+            is VoiceCommand.AdjustBrightness -> {
+                command.percent?.let { entities["percent"] = it.toString() }
+                command.raise?.let { entities["raise"] = it.toString() }
+            }
+            is VoiceCommand.CallContact -> entities["target"] = command.target
+            is VoiceCommand.SendMessage -> {
+                entities["target"] = command.target
+                entities["body"] = command.body
+            }
+            is VoiceCommand.WhatsAppMessage -> {
+                entities["target"] = command.target
+                entities["body"] = command.body
+            }
+            is VoiceCommand.FindContact -> entities["contactName"] = command.contactName
+            else -> Unit
+        }
+
+        val (execResult, defaultVerification, failureReason) = when (result) {
+            is VoiceCommandResult.Handled -> Triple(result.replyText, "VERIFIED", null)
+            is VoiceCommandResult.Error -> Triple("ERROR", "FAILED", result.errorMessage)
+            is VoiceCommandResult.ForwardToAi -> Triple("FORWARDED_TO_AI", "PENDING_AI", null)
+            is VoiceCommandResult.RequiresConfirmation -> Triple("CONFIRMATION_REQUIRED", "PENDING_USER", null)
+            is VoiceCommandResult.CollectMessageInput -> Triple("COLLECT_INPUT", "PENDING_USER", null)
+        }
+
+        val finalVerification = specificVerification ?: defaultVerification
+        val finalFailureReason = specificFailureReason ?: failureReason
+
+        CommandDiagnosticLogger.log(
+            rawCommand = raw,
+            detectedIntent = intentName,
+            extractedEntities = entities,
+            targetApp = detectedTargetApp,
+            searchQuery = detectedSearchQuery,
+            launchMethod = detectedLaunchMethod,
+            searchMethod = detectedSearchMethod,
+            executionResult = execResult,
+            verificationResult = finalVerification,
+            failureReason = finalFailureReason,
+            latencyMs = latencyMs
+        )
     }
 
     private suspend fun executeOpenApp(appName: String, context: Context): VoiceCommandResult {
         val discovery = AppDiscoveryManager(context)
         return when (val outcome = discovery.findAndLaunchApp(appName)) {
             is AppLaunchOutcome.Success -> {
-                VoiceCommandResult.Handled("Opening ${outcome.appLabel}...")
+                VoiceCommandResult.Handled("${outcome.appLabel} khol diya hai.")
             }
             is AppLaunchOutcome.MultipleMatches -> {
-                VoiceCommandResult.Handled("Found multiple matches: ${outcome.candidates.joinToString(", ")}. Which one should I open?")
+                VoiceCommandResult.Handled("Multiple apps mile: ${outcome.candidates.joinToString(", ")}. Kaunsa open karna hai?")
             }
             is AppLaunchOutcome.NotInstalled -> {
-                VoiceCommandResult.Handled("${outcome.appName} installed nahi hai.")
+                VoiceCommandResult.Handled("${outcome.appName} phone mein installed nahi hai.")
             }
             is AppLaunchOutcome.FailedToLaunch -> {
-                VoiceCommandResult.Error("Could not launch ${outcome.appLabel}.")
+                VoiceCommandResult.Error("${outcome.appLabel} open nahi ho paya.")
             }
+        }
+    }
+
+    private fun executeCloseApp(cmd: VoiceCommand.CloseApp, context: Context): VoiceCommandResult {
+        if (com.rexyy.app.accessibility.RexyyAccessibilityService.isServiceEnabled()) {
+            val success = com.rexyy.app.accessibility.AccessibilityActionExecutor.pressHome()
+            if (success) {
+                return VoiceCommandResult.Handled("REXYY background mein chala gaya.")
+            }
+        }
+
+        val homeIntent = Intent(Intent.ACTION_MAIN).apply {
+            addCategory(Intent.CATEGORY_HOME)
+            flags = Intent.FLAG_ACTIVITY_NEW_TASK
+        }
+        return try {
+            context.startActivity(homeIntent)
+            VoiceCommandResult.Handled("REXYY background mein chala gaya.")
+        } catch (e: Exception) {
+            VoiceCommandResult.Error("Unable to minimize app: ${e.localizedMessage}")
         }
     }
 
@@ -103,7 +276,7 @@ object VoiceCommandExecutor {
         return when (val result = wa.openWhatsApp()) {
             is WhatsAppActionResult.Success -> VoiceCommandResult.Handled(result.message)
             is WhatsAppActionResult.NotInstalled -> VoiceCommandResult.Handled(result.message)
-            else -> VoiceCommandResult.Error("Could not open WhatsApp.")
+            else -> VoiceCommandResult.Error("WhatsApp open nahi ho paya.")
         }
     }
 
@@ -134,7 +307,7 @@ object VoiceCommandExecutor {
                     )
                 }
                 is WhatsAppActionResult.NotInstalled -> VoiceCommandResult.Handled(prep.message)
-                else -> VoiceCommandResult.Error("Unable to prepare WhatsApp message.")
+                else -> VoiceCommandResult.Error("WhatsApp message prepare nahi ho paya.")
             }
         } else {
             val resolvedPhone = CallerIdentityResolver.findPhoneNumberByName(context, cmd.target)
@@ -142,7 +315,7 @@ object VoiceCommandExecutor {
                 is WhatsAppActionResult.Success -> VoiceCommandResult.Handled(sent.message)
                 is WhatsAppActionResult.NotInstalled -> VoiceCommandResult.Handled(sent.message)
                 is WhatsAppActionResult.Failure -> VoiceCommandResult.Error(sent.error)
-                else -> VoiceCommandResult.Error("WhatsApp send failed.")
+                else -> VoiceCommandResult.Error("WhatsApp message send nahi hua.")
             }
         }
     }
@@ -153,7 +326,7 @@ object VoiceCommandExecutor {
             is WhatsAppActionResult.Success -> VoiceCommandResult.Handled(chat.message)
             is WhatsAppActionResult.NotInstalled -> VoiceCommandResult.Handled(chat.message)
             is WhatsAppActionResult.Failure -> VoiceCommandResult.Error(chat.error)
-            else -> VoiceCommandResult.Error("Could not open chat.")
+            else -> VoiceCommandResult.Error("WhatsApp chat open nahi ho payi.")
         }
     }
 
@@ -176,7 +349,7 @@ object VoiceCommandExecutor {
 
     private fun executeCheckCaller(context: Context): VoiceCommandResult {
         val manager = CallStateManager(context)
-        val voiceLang = com.rexyy.app.data.local.SecureStorage(context).getVoiceLanguage()
+        val voiceLang = SecureStorage(context).getVoiceLanguage()
         val msg = manager.getCurrentRingingCallerAnnouncement(voiceLang)
         return VoiceCommandResult.Handled(msg)
     }
@@ -203,56 +376,59 @@ object VoiceCommandExecutor {
 
     private fun executeAdjustVolume(cmd: VoiceCommand.AdjustVolume, context: Context): VoiceCommandResult {
         val audioManager = context.getSystemService(Context.AUDIO_SERVICE) as? AudioManager
-            ?: return VoiceCommandResult.Error("Audio service unavailable.")
+            ?: return VoiceCommandResult.Error("Audio service available nahi hai.")
+
+        val maxVol = audioManager.getStreamMaxVolume(AudioManager.STREAM_MUSIC)
 
         if (cmd.mute) {
             audioManager.setStreamVolume(AudioManager.STREAM_MUSIC, 0, AudioManager.FLAG_SHOW_UI)
-            return VoiceCommandResult.Handled("Media volume muted.")
+            val current = audioManager.getStreamVolume(AudioManager.STREAM_MUSIC)
+            return if (current == 0) {
+                VoiceCommandResult.Handled("Media volume mute kar diya gaya hai.")
+            } else {
+                VoiceCommandResult.Handled("Volume minimum set kar diya gaya hai.")
+            }
         }
 
         if (cmd.percent != null) {
-            val maxVol = audioManager.getStreamMaxVolume(AudioManager.STREAM_MUSIC)
             val target = (maxVol * (cmd.percent / 100f)).toInt().coerceIn(0, maxVol)
             audioManager.setStreamVolume(AudioManager.STREAM_MUSIC, target, AudioManager.FLAG_SHOW_UI)
-            return VoiceCommandResult.Handled("Volume set to ${cmd.percent}%.")
+            val readVol = audioManager.getStreamVolume(AudioManager.STREAM_MUSIC)
+            val readPct = if (maxVol > 0) (readVol * 100 / maxVol) else cmd.percent
+            return VoiceCommandResult.Handled("Volume $readPct% set kar diya gaya hai.")
         }
 
         val direction = if (cmd.raise) AudioManager.ADJUST_RAISE else AudioManager.ADJUST_LOWER
         audioManager.adjustStreamVolume(AudioManager.STREAM_MUSIC, direction, AudioManager.FLAG_SHOW_UI)
-        val actionDesc = if (cmd.raise) "Volume increased." else "Volume decreased."
+        val actionDesc = if (cmd.raise) "Volume badha diya gaya hai." else "Volume kam kar diya gaya hai."
         return VoiceCommandResult.Handled(actionDesc)
     }
 
     private fun executeAdjustBrightness(cmd: VoiceCommand.AdjustBrightness, context: Context): VoiceCommandResult {
         val canWrite = Settings.System.canWrite(context)
-        if (canWrite) {
-            try {
-                val current = Settings.System.getInt(context.contentResolver, Settings.System.SCREEN_BRIGHTNESS, 128)
-                val targetValue = if (cmd.percent != null) {
-                    (cmd.percent * 255 / 100).coerceIn(10, 255)
-                } else if (cmd.raise == true) {
-                    (current + 45).coerceAtMost(255)
-                } else if (cmd.raise == false) {
-                    (current - 45).coerceAtLeast(15)
-                } else {
-                    current
-                }
-                Settings.System.putInt(context.contentResolver, Settings.System.SCREEN_BRIGHTNESS, targetValue)
-                val finalPct = (targetValue * 100 / 255)
-                return VoiceCommandResult.Handled("Brightness set to $finalPct%.")
-            } catch (e: Exception) {
-                // fallback to settings
-            }
+        if (!canWrite) {
+            // Strictly return error with clear explanation, never falsely report success
+            return VoiceCommandResult.Error("Screen brightness change karne ke liye 'Write System Settings' permission zaroori hai. Kripya Settings mein 'Modify system settings' allow karein.")
         }
 
-        val intent = Intent(Settings.ACTION_DISPLAY_SETTINGS).apply {
-            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-        }
         return try {
-            context.startActivity(intent)
-            VoiceCommandResult.Handled("System settings write permission required for direct brightness. Opening display settings...")
+            val current = Settings.System.getInt(context.contentResolver, Settings.System.SCREEN_BRIGHTNESS, 128)
+            val targetValue = if (cmd.percent != null) {
+                (cmd.percent * 255 / 100).coerceIn(10, 255)
+            } else if (cmd.raise == true) {
+                (current + 50).coerceAtMost(255)
+            } else if (cmd.raise == false) {
+                (current - 50).coerceAtLeast(15)
+            } else {
+                current
+            }
+
+            Settings.System.putInt(context.contentResolver, Settings.System.SCREEN_BRIGHTNESS, targetValue)
+            val readBack = Settings.System.getInt(context.contentResolver, Settings.System.SCREEN_BRIGHTNESS, -1)
+            val finalPct = (readBack * 100 / 255)
+            VoiceCommandResult.Handled("Brightness $finalPct% par set ho gayi hai.")
         } catch (e: Exception) {
-            VoiceCommandResult.Error("Unable to open display settings: ${e.localizedMessage}")
+            VoiceCommandResult.Error("Brightness change karne mein error: ${e.localizedMessage}")
         }
     }
 
@@ -269,8 +445,11 @@ object VoiceCommandExecutor {
             VoiceCommand.AccessibilityAction.ActionType.GO_HOME -> com.rexyy.app.accessibility.AccessibilityActionExecutor.pressHome()
             VoiceCommand.AccessibilityAction.ActionType.RECENTS -> com.rexyy.app.accessibility.AccessibilityActionExecutor.pressRecentApps()
             VoiceCommand.AccessibilityAction.ActionType.TYPE_TEXT -> com.rexyy.app.accessibility.AccessibilityActionExecutor.inputText(cmd.argument)
+            VoiceCommand.AccessibilityAction.ActionType.REPLACE_TEXT -> com.rexyy.app.accessibility.AccessibilityActionExecutor.replaceText(cmd.argument)
             VoiceCommand.AccessibilityAction.ActionType.COPY -> com.rexyy.app.accessibility.AccessibilityActionExecutor.copy()
             VoiceCommand.AccessibilityAction.ActionType.PASTE -> com.rexyy.app.accessibility.AccessibilityActionExecutor.paste()
+            VoiceCommand.AccessibilityAction.ActionType.CLICK_NODE -> com.rexyy.app.accessibility.AccessibilityActionExecutor.clickByText(cmd.argument)
+            VoiceCommand.AccessibilityAction.ActionType.SUBMIT_SEARCH -> com.rexyy.app.accessibility.AccessibilityActionExecutor.submitSearch()
         }
 
         return if (success) {
@@ -281,12 +460,27 @@ object VoiceCommandExecutor {
                 VoiceCommand.AccessibilityAction.ActionType.GO_HOME -> "Returned to home screen."
                 VoiceCommand.AccessibilityAction.ActionType.RECENTS -> "Opened recent apps."
                 VoiceCommand.AccessibilityAction.ActionType.TYPE_TEXT -> "Typed: ${cmd.argument}."
+                VoiceCommand.AccessibilityAction.ActionType.REPLACE_TEXT -> "Replaced text: ${cmd.argument}."
                 VoiceCommand.AccessibilityAction.ActionType.COPY -> "Text copied."
                 VoiceCommand.AccessibilityAction.ActionType.PASTE -> "Text pasted."
+                VoiceCommand.AccessibilityAction.ActionType.CLICK_NODE -> "Clicked: ${cmd.argument}."
+                VoiceCommand.AccessibilityAction.ActionType.SUBMIT_SEARCH -> "Search submitted."
             }
             VoiceCommandResult.Handled(label)
         } else {
             VoiceCommandResult.Error("Could not perform accessibility action on active screen.")
+        }
+    }
+
+    private suspend fun executeMultiStepTask(cmd: VoiceCommand.MultiStepTask, context: Context): VoiceCommandResult {
+        val workflowResult = com.rexyy.app.accessibility.MultiStepWorkflowManager.executeWorkflow(cmd, context)
+        return when (workflowResult.finalState) {
+            com.rexyy.app.accessibility.WorkflowExecutionState.VERIFIED -> {
+                VoiceCommandResult.Handled(workflowResult.summaryMessage)
+            }
+            else -> {
+                VoiceCommandResult.Error(workflowResult.summaryMessage)
+            }
         }
     }
 
@@ -296,9 +490,9 @@ object VoiceCommandExecutor {
         }
         return try {
             context.startActivity(intent)
-            VoiceCommandResult.Handled("Opening Bluetooth settings...")
+            VoiceCommandResult.Handled("Bluetooth settings open kar di gayi hai.")
         } catch (e: Exception) {
-            VoiceCommandResult.Error("Could not open Bluetooth settings: ${e.localizedMessage}")
+            VoiceCommandResult.Error("Bluetooth settings open nahi ho payi: ${e.localizedMessage}")
         }
     }
 
@@ -308,21 +502,33 @@ object VoiceCommandExecutor {
         }
         return try {
             context.startActivity(intent)
-            VoiceCommandResult.Handled("Opening Wi-Fi settings...")
+            VoiceCommandResult.Handled("Wi-Fi settings open kar di gayi hai.")
         } catch (e: Exception) {
-            VoiceCommandResult.Error("Could not open Wi-Fi settings: ${e.localizedMessage}")
+            VoiceCommandResult.Error("Wi-Fi settings open nahi ho payi: ${e.localizedMessage}")
         }
     }
 
-    private fun executeOpenSettings(context: Context): VoiceCommandResult {
-        val intent = Intent(Settings.ACTION_SETTINGS).apply {
+    private fun executeOpenSettings(subSettings: String = "", context: Context): VoiceCommandResult {
+        val intent = when (subSettings.lowercase().trim()) {
+            "display", "screen" -> Intent(Settings.ACTION_DISPLAY_SETTINGS)
+            "sound", "audio", "volume", "ringtone" -> Intent(Settings.ACTION_SOUND_SETTINGS)
+            "battery", "power" -> Intent(Intent.ACTION_POWER_USAGE_SUMMARY)
+            "apps", "applications" -> Intent(Settings.ACTION_MANAGE_APPLICATIONS_SETTINGS)
+            "location", "gps" -> Intent(Settings.ACTION_LOCATION_SOURCE_SETTINGS)
+            "storage" -> Intent(Settings.ACTION_INTERNAL_STORAGE_SETTINGS)
+            "network", "data", "wireless" -> Intent(Settings.ACTION_WIRELESS_SETTINGS)
+            "developer" -> Intent(Settings.ACTION_APPLICATION_DEVELOPMENT_SETTINGS)
+            else -> Intent(Settings.ACTION_SETTINGS)
+        }.apply {
             addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         }
+
         return try {
             context.startActivity(intent)
-            VoiceCommandResult.Handled("Opening system settings...")
+            val name = if (subSettings.isBlank()) "Settings" else "$subSettings Settings"
+            VoiceCommandResult.Handled("$name open kar di gayi hai.")
         } catch (e: Exception) {
-            VoiceCommandResult.Error("Could not open Settings: ${e.localizedMessage}")
+            VoiceCommandResult.Error("Settings open nahi ho payi: ${e.localizedMessage}")
         }
     }
 
@@ -332,10 +538,8 @@ object VoiceCommandExecutor {
         }
         return try {
             context.startActivity(intent)
-            VoiceCommandResult.Handled("Opening camera...")
+            VoiceCommandResult.Handled("Camera open kar diya gaya hai.")
         } catch (_: Exception) {
-            // Fallback to launching general camera app
-            val discovery = AppDiscoveryManager(context)
             executeOpenApp("Camera", context)
         }
     }
@@ -347,9 +551,9 @@ object VoiceCommandExecutor {
         }
         return try {
             context.startActivity(intent)
-            VoiceCommandResult.Handled("Opening calendar...")
+            VoiceCommandResult.Handled("Calendar open kar diya gaya hai.")
         } catch (e: Exception) {
-            VoiceCommandResult.Error("Could not open calendar: ${e.localizedMessage}")
+            VoiceCommandResult.Error("Calendar open nahi ho paya: ${e.localizedMessage}")
         }
     }
 
@@ -359,9 +563,9 @@ object VoiceCommandExecutor {
         }
         return try {
             context.startActivity(intent)
-            VoiceCommandResult.Handled("Opening contacts...")
+            VoiceCommandResult.Handled("Contacts open kar diye gaye hain.")
         } catch (e: Exception) {
-            VoiceCommandResult.Error("Could not open contacts: ${e.localizedMessage}")
+            VoiceCommandResult.Error("Contacts open nahi ho paye: ${e.localizedMessage}")
         }
     }
 
@@ -372,12 +576,20 @@ object VoiceCommandExecutor {
         val model = Build.MODEL
         val manufacturer = Build.MANUFACTURER.replaceFirstChar { it.uppercase() }
         val androidVer = Build.VERSION.RELEASE
+        val sdk = Build.VERSION.SDK_INT
+
+        val actManager = context.getSystemService(Context.ACTIVITY_SERVICE) as? ActivityManager
+        val memInfo = ActivityManager.MemoryInfo()
+        actManager?.getMemoryInfo(memInfo)
+        val availRamMb = memInfo.availMem / (1024 * 1024)
+        val totalRamMb = memInfo.totalMem / (1024 * 1024)
 
         val info = buildString {
             append("Device: $manufacturer $model\n")
-            append("Android OS: Version $androidVer (API ${Build.VERSION.SDK_INT})\n")
-            if (batteryPct >= 0) append("Battery Level: $batteryPct%")
-        }
+            append("Android OS: Version $androidVer (API $sdk)\n")
+            if (batteryPct >= 0) append("Battery: $batteryPct%\n")
+            if (totalRamMb > 0) append("RAM: ${availRamMb}MB available of ${totalRamMb}MB")
+        }.trim()
 
         return VoiceCommandResult.Handled(info)
     }
@@ -386,17 +598,17 @@ object VoiceCommandExecutor {
         val intent = Intent(AlarmClock.ACTION_SET_TIMER).apply {
             putExtra(AlarmClock.EXTRA_LENGTH, seconds)
             putExtra(AlarmClock.EXTRA_MESSAGE, message)
-            putExtra(AlarmClock.EXTRA_SKIP_UI, false)
+            putExtra(AlarmClock.EXTRA_SKIP_UI, true)
             addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         }
         return try {
             context.startActivity(intent)
             val min = seconds / 60
             val sec = seconds % 60
-            val desc = if (min > 0 && sec > 0) "$min minutes $sec seconds" else if (min > 0) "$min minutes" else "$sec seconds"
-            VoiceCommandResult.Handled("Timer set for $desc.")
+            val desc = if (min > 0 && sec > 0) "$min minute $sec second" else if (min > 0) "$min minute" else "$sec second"
+            VoiceCommandResult.Handled("$desc ka timer set kar diya gaya hai.")
         } catch (e: Exception) {
-            VoiceCommandResult.Error("Could not set timer: ${e.localizedMessage}")
+            VoiceCommandResult.Error("Timer set nahi ho paya: ${e.localizedMessage}")
         }
     }
 
@@ -405,15 +617,15 @@ object VoiceCommandExecutor {
             putExtra(AlarmClock.EXTRA_HOUR, hour)
             putExtra(AlarmClock.EXTRA_MINUTES, minute)
             putExtra(AlarmClock.EXTRA_MESSAGE, message)
-            putExtra(AlarmClock.EXTRA_SKIP_UI, false)
+            putExtra(AlarmClock.EXTRA_SKIP_UI, true)
             addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         }
         return try {
             context.startActivity(intent)
             val formatted = String.format("%02d:%02d", hour, minute)
-            VoiceCommandResult.Handled("Alarm screen open kar di hai ($formatted). Kripya Clock app mein confirm karein.")
+            VoiceCommandResult.Handled("Alarm $formatted baje ke liye set kar diya gaya hai.")
         } catch (e: Exception) {
-            VoiceCommandResult.Error("Could not set alarm: ${e.localizedMessage}")
+            VoiceCommandResult.Error("Alarm set nahi ho paya: ${e.localizedMessage}")
         }
     }
 
@@ -424,14 +636,14 @@ object VoiceCommandExecutor {
         }
         return try {
             context.startActivity(intent)
-            VoiceCommandResult.Handled("Searching for \"$query\"...")
+            VoiceCommandResult.Handled("\"$query\" search kiya ja raha hai...")
         } catch (_: Exception) {
             val url = "https://www.google.com/search?q=" + URLEncoder.encode(query, "UTF-8")
             val browserIntent = Intent(Intent.ACTION_VIEW, Uri.parse(url)).apply {
                 addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
             }
             context.startActivity(browserIntent)
-            VoiceCommandResult.Handled("Searching for \"$query\"...")
+            VoiceCommandResult.Handled("\"$query\" search kiya ja raha hai...")
         }
     }
 
@@ -460,9 +672,9 @@ object VoiceCommandExecutor {
         }
         return try {
             context.startActivity(sendIntent)
-            VoiceCommandResult.Handled("Opening SMS composer for ${cmd.target}...")
+            VoiceCommandResult.Handled("${cmd.target} ke liye SMS composer open ho gaya hai.")
         } catch (e: Exception) {
-            VoiceCommandResult.Error("Could not compose SMS: ${e.localizedMessage}")
+            VoiceCommandResult.Error("SMS composer open nahi ho paya: ${e.localizedMessage}")
         }
     }
 
@@ -472,7 +684,7 @@ object VoiceCommandExecutor {
 
         return when (val result = CallerIdentityResolver.resolveContactSummary(context, contactName)) {
             is CallerIdentityResolver.ContactSearchResult.PermissionNeeded -> {
-                VoiceCommandResult.Error("Contacts permission is required to search contacts. Please grant Contacts permission in Settings.")
+                VoiceCommandResult.Error("Contacts permission required hai. Settings mein Contacts permission allow karein.")
             }
             is CallerIdentityResolver.ContactSearchResult.NotFound -> {
                 val msg = when (lang) {
@@ -487,7 +699,7 @@ object VoiceCommandExecutor {
                 val msg = when (lang) {
                     com.rexyy.app.utils.AppLanguage.HINDI -> "${c.name} का नंबर मिल गया: ${c.phoneNumber}। क्या आप कॉल या WhatsApp करना चाहते हैं?"
                     com.rexyy.app.utils.AppLanguage.ENGLISH -> "Found ${c.name}: ${c.phoneNumber}. You can say \"Call ${c.name}\" or \"WhatsApp ${c.name}\"."
-                    com.rexyy.app.utils.AppLanguage.HINGLISH -> "Found ${c.name}: ${c.phoneNumber}. Aap keh sakte hain \"${c.name} ko call karo\" ya \"${c.name} ko WhatsApp bhejo\"."
+                    com.rexyy.app.utils.AppLanguage.HINGLISH -> "Found ${c.name}: ${c.phoneNumber}. Aap bol sakte hain \"${c.name} ko call karo\" ya \"${c.name} ko WhatsApp bhejo\"."
                 }
                 VoiceCommandResult.Handled(msg)
             }
@@ -516,16 +728,16 @@ object VoiceCommandExecutor {
                 addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
             }
             context.startActivity(intent)
-            VoiceCommandResult.Handled("Dismissing alarm...")
+            VoiceCommandResult.Handled("Alarm dismiss kiya ja raha hai.")
         } catch (_: Exception) {
             val intent = Intent(AlarmClock.ACTION_SHOW_ALARMS).apply {
                 addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
             }
             try {
                 context.startActivity(intent)
-                VoiceCommandResult.Handled("Opening alarms to cancel.")
+                VoiceCommandResult.Handled("Alarms open kar diye gaye hain.")
             } catch (e: Exception) {
-                VoiceCommandResult.Error("Could not cancel alarm: ${e.localizedMessage}")
+                VoiceCommandResult.Error("Alarm cancel nahi ho paya: ${e.localizedMessage}")
             }
         }
     }
@@ -536,24 +748,28 @@ object VoiceCommandExecutor {
                 addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
             }
             context.startActivity(intent)
-            VoiceCommandResult.Handled("Dismissing timer...")
+            VoiceCommandResult.Handled("Timer dismiss kiya ja raha hai.")
         } catch (_: Exception) {
-            VoiceCommandResult.Handled("Timer dismiss intent sent.")
+            VoiceCommandResult.Handled("Timer dismiss request sent.")
         }
     }
 
     private fun executeWhatCanYouDo(): VoiceCommandResult {
         val capabilities = """
-            Here is what I can do locally & fast:
-            • Open Apps: "Open YouTube", "Instagram kholo", "Open WhatsApp", "YT kholo"
-            • Calls: "Call Ramzan", "Ramzan ko call karo", "Incoming caller check"
-            • WhatsApp: "Send WhatsApp to Ramzan", "Ramzan ko WhatsApp message bhejo"
+            Main yeh sab commands directly bina AI ke locally execute kar sakta hoon:
+            • Apps: "YouTube kholo", "Instagram khol do", "Open WhatsApp", "YT chalao"
+            • Close / Background: "Exit", "Close app", "Background me jao"
+            • Calls: "Call Ramzan", "Ramzan ko call karo", "Call uthao", "Call kato"
+            • WhatsApp: "Ramzan ko WhatsApp message bhejo", "WhatsApp open karo"
             • SMS: "Ramzan ko SMS bhejo"
-            • Contacts: "Find Ramzan in my contacts"
-            • Alarms & Timers: "7 baje alarm lagao", "10 minute ka timer lagao", "Cancel alarm"
-            • Device & Settings: "Bluetooth settings", "Wi-Fi settings", "Volume badhao", "Brightness set karo"
-            • Multi-Step: "Open YouTube and search cricket"
-            • AI Knowledge: Ask anything for complex conversational answers!
+            • Contacts: "Find Ramzan in my contacts", "Contacts kholo"
+            • Alarms & Timers: "7 baje alarm laga do", "10 minute ka timer lagao"
+            • Battery & Device: "Battery kitni hai", "Battery status", "Device info"
+            • Date & Time: "Aaj ki date kya hai", "Time kya hua"
+            • Brightness & Volume: "Brightness 50% karo", "Volume badhao", "Mute"
+            • Torch & Settings: "Torch on karo", "Settings kholo", "Wi-Fi settings"
+            • Search: "YouTube pe cricket search karo", "Search for weather"
+            • Generative AI: Kisi bhi sawal ya discussion ke liye poochhein!
         """.trimIndent()
         return VoiceCommandResult.Handled(capabilities)
     }
@@ -566,100 +782,41 @@ object VoiceCommandExecutor {
         }
         return try {
             context.startActivity(intent)
-            VoiceCommandResult.Handled("Creating reminder: \"$title\"")
+            VoiceCommandResult.Handled("Reminder create kiya ja raha hai: \"$title\"")
         } catch (_: Exception) {
             VoiceCommandResult.Handled("Reminder noted: $title")
         }
     }
 
-    private fun executeAppSearch(cmd: VoiceCommand.AppSearch, context: Context): VoiceCommandResult {
+    private suspend fun executeAppSearch(cmd: VoiceCommand.AppSearch, context: Context): VoiceCommandResult {
         return try {
-            when (cmd.targetApp) {
-                "youtube" -> {
-                    val encoded = URLEncoder.encode(cmd.query, "UTF-8")
-                    val intent = Intent(Intent.ACTION_SEARCH).apply {
-                        setPackage("com.google.android.youtube")
-                        putExtra("query", cmd.query)
-                        flags = Intent.FLAG_ACTIVITY_NEW_TASK
-                    }
-                    try {
-                        context.startActivity(intent)
-                    } catch (_: Exception) {
-                        val webIntent = Intent(Intent.ACTION_VIEW, Uri.parse("https://www.youtube.com/results?search_query=$encoded")).apply {
-                            flags = Intent.FLAG_ACTIVITY_NEW_TASK
-                        }
-                        context.startActivity(webIntent)
-                    }
-                    VoiceCommandResult.Handled("Searching for \"${cmd.query}\" on YouTube...")
+            val searchManager = AppSearchManager(context)
+            val result = searchManager.executeSearch(cmd.targetApp, cmd.query)
+            lastAppSearchResult = result
+
+            when (result.verificationStatus) {
+                SearchVerificationStatus.SEARCH_VERIFIED,
+                SearchVerificationStatus.SEARCH_STARTED,
+                SearchVerificationStatus.APP_LAUNCHED -> {
+                    VoiceCommandResult.Handled(result.replyText)
                 }
-                "chrome" -> {
-                    val encoded = URLEncoder.encode(cmd.query, "UTF-8")
-                    val intent = Intent(Intent.ACTION_VIEW, Uri.parse("https://www.google.com/search?q=$encoded")).apply {
-                        setPackage("com.android.chrome")
-                        flags = Intent.FLAG_ACTIVITY_NEW_TASK
-                    }
-                    try {
-                        context.startActivity(intent)
-                    } catch (_: Exception) {
-                        val browserIntent = Intent(Intent.ACTION_VIEW, Uri.parse("https://www.google.com/search?q=$encoded")).apply {
-                            flags = Intent.FLAG_ACTIVITY_NEW_TASK
-                        }
-                        context.startActivity(browserIntent)
-                    }
-                    VoiceCommandResult.Handled("Searching for \"${cmd.query}\" on Chrome...")
-                }
-                "maps" -> {
-                    val encoded = Uri.encode(cmd.query)
-                    val mapIntent = Intent(Intent.ACTION_VIEW, Uri.parse("geo:0,0?q=$encoded")).apply {
-                        setPackage("com.google.android.apps.maps")
-                        flags = Intent.FLAG_ACTIVITY_NEW_TASK
-                    }
-                    try {
-                        context.startActivity(mapIntent)
-                    } catch (_: Exception) {
-                        val webMap = Intent(Intent.ACTION_VIEW, Uri.parse("https://maps.google.com/?q=$encoded")).apply {
-                            flags = Intent.FLAG_ACTIVITY_NEW_TASK
-                        }
-                        context.startActivity(webMap)
-                    }
-                    VoiceCommandResult.Handled("Searching for \"${cmd.query}\" on Maps...")
-                }
-                "spotify" -> {
-                    val encoded = Uri.encode(cmd.query)
-                    val intent = Intent(Intent.ACTION_VIEW, Uri.parse("spotify:search:$encoded")).apply {
-                        flags = Intent.FLAG_ACTIVITY_NEW_TASK
-                    }
-                    try {
-                        context.startActivity(intent)
-                    } catch (_: Exception) {
-                        val webIntent = Intent(Intent.ACTION_VIEW, Uri.parse("https://open.spotify.com/search/$encoded")).apply {
-                            flags = Intent.FLAG_ACTIVITY_NEW_TASK
-                        }
-                        context.startActivity(webIntent)
-                    }
-                    VoiceCommandResult.Handled("Searching for \"${cmd.query}\" on Spotify...")
-                }
-                "playstore" -> {
-                    val encoded = Uri.encode(cmd.query)
-                    val intent = Intent(Intent.ACTION_VIEW, Uri.parse("market://search?q=$encoded")).apply {
-                        flags = Intent.FLAG_ACTIVITY_NEW_TASK
-                    }
-                    try {
-                        context.startActivity(intent)
-                    } catch (_: Exception) {
-                        val webIntent = Intent(Intent.ACTION_VIEW, Uri.parse("https://play.google.com/store/search?q=$encoded")).apply {
-                            flags = Intent.FLAG_ACTIVITY_NEW_TASK
-                        }
-                        context.startActivity(webIntent)
-                    }
-                    VoiceCommandResult.Handled("Searching for \"${cmd.query}\" on Google Play Store...")
-                }
-                else -> {
-                    executeGoogleSearch(cmd.query, context)
+                SearchVerificationStatus.FAILED -> {
+                    VoiceCommandResult.Error(result.replyText)
                 }
             }
         } catch (e: Exception) {
-            VoiceCommandResult.Error("Could not perform search: ${e.localizedMessage}")
+            val failedResult = AppSearchResult(
+                targetApp = cmd.targetApp,
+                resolvedPackage = null,
+                extractedQuery = cmd.query,
+                launchMethod = "NONE",
+                searchMethod = "NONE",
+                verificationStatus = SearchVerificationStatus.FAILED,
+                replyText = "Search perform nahi ho paya: ${e.localizedMessage}",
+                failureReason = e.localizedMessage
+            )
+            lastAppSearchResult = failedResult
+            VoiceCommandResult.Error("Search perform nahi ho paya: ${e.localizedMessage}")
         }
     }
 
@@ -668,26 +825,36 @@ object VoiceCommandExecutor {
             val batteryIntent = context.registerReceiver(null, IntentFilter(Intent.ACTION_BATTERY_CHANGED))
             val rawLevel = batteryIntent?.getIntExtra(BatteryManager.EXTRA_LEVEL, -1) ?: -1
             val scale = batteryIntent?.getIntExtra(BatteryManager.EXTRA_SCALE, -1) ?: -1
-            val pct = if (rawLevel >= 0 && scale > 0) ((rawLevel / scale.toFloat()) * 100).toInt() else 100
+            val pct = if (rawLevel >= 0 && scale > 0) {
+                ((rawLevel / scale.toFloat()) * 100).toInt()
+            } else {
+                val bm = context.getSystemService(Context.BATTERY_SERVICE) as? BatteryManager
+                bm?.getIntProperty(BatteryManager.BATTERY_PROPERTY_CAPACITY) ?: -1
+            }
             val status = batteryIntent?.getIntExtra(BatteryManager.EXTRA_STATUS, -1) ?: -1
             val isCharging = status == BatteryManager.BATTERY_STATUS_CHARGING || status == BatteryManager.BATTERY_STATUS_FULL
-            val statusStr = if (isCharging) "Charging" else "Not charging"
-            VoiceCommandResult.Handled("Battery is currently at $pct% ($statusStr).")
+            val chargingText = if (isCharging) "charging ho rahi hai" else "charging nahi ho rahi hai"
+
+            if (pct >= 0) {
+                VoiceCommandResult.Handled("Battery abhi $pct% hai aur $chargingText.")
+            } else {
+                VoiceCommandResult.Handled("Battery status available nahi hai.")
+            }
         } catch (e: Exception) {
-            VoiceCommandResult.Error("Could not retrieve battery info: ${e.localizedMessage}")
+            VoiceCommandResult.Error("Battery info retrieve nahi ho payi: ${e.localizedMessage}")
         }
     }
 
     private fun executeGetDate(): VoiceCommandResult {
         val sdf = SimpleDateFormat("EEEE, d MMMM yyyy", Locale.getDefault())
         val dateStr = sdf.format(Date())
-        return VoiceCommandResult.Handled("Today's date is $dateStr.")
+        return VoiceCommandResult.Handled("Aaj ki date hai: $dateStr.")
     }
 
     private fun executeGetTime(): VoiceCommandResult {
         val sdf = SimpleDateFormat("hh:mm a", Locale.getDefault())
         val timeStr = sdf.format(Date())
-        return VoiceCommandResult.Handled("Current time is $timeStr.")
+        return VoiceCommandResult.Handled("Abhi samay hai: $timeStr.")
     }
 
     private fun executeToggleFlashlight(turnOn: Boolean?, context: Context): VoiceCommandResult {
@@ -697,9 +864,9 @@ object VoiceCommandExecutor {
             if (camManager != null && cameraId != null) {
                 val enable = turnOn ?: true
                 camManager.setTorchMode(cameraId, enable)
-                VoiceCommandResult.Handled(if (enable) "Flashlight turned on." else "Flashlight turned off.")
+                VoiceCommandResult.Handled(if (enable) "Torch on ho gaya." else "Torch off ho gaya.")
             } else {
-                VoiceCommandResult.Error("Flashlight hardware not available.")
+                VoiceCommandResult.Error("Device mein torch/flashlight hardware available nahi hai.")
             }
         } catch (e: Exception) {
             VoiceCommandResult.Error("Flashlight error: ${e.localizedMessage}")

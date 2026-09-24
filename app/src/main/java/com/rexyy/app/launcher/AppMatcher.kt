@@ -4,44 +4,96 @@ object AppMatcher {
 
     /**
      * Matches a searched application name against the device's installed apps.
-     * Prevents unintended substitutions (e.g. YouTube vs YouTube Music).
+     * Enforces strict app identity: prevents unintended substitutions (e.g. YouTube vs YouTube Music).
      */
     fun matchApp(query: String, installedApps: List<AppInfo>): AppMatchResult {
         val cleanQuery = query.lowercase().trim()
-            .replace("app", "")
+            .replace(Regex("(?i)\\b(app|application)\\b"), "")
             .trim()
 
         if (cleanQuery.isBlank()) return AppMatchResult.NotFound(query)
 
-        // 0. High-priority deterministic package matching for major applications
-        val deterministicMatch = when (cleanQuery) {
-            "youtube", "yt", "you tube" -> {
-                installedApps.firstOrNull { it.packageName == "com.google.android.youtube" }
-                    ?: installedApps.firstOrNull { it.label.equals("YouTube", ignoreCase = true) }
-            }
+        // 0. Strict deterministic resolution for core applications.
+        // If a specific core app is requested, it MUST resolve to that exact app or NotFound.
+        // It must NEVER fall through to partial matching or substitute another app.
+        when (cleanQuery) {
             "youtube music", "yt music", "ytmusic" -> {
-                installedApps.firstOrNull { it.packageName == "com.google.android.apps.youtube.music" }
-                    ?: installedApps.firstOrNull { it.label.contains("YouTube Music", ignoreCase = true) }
+                val match = installedApps.firstOrNull { 
+                    it.packageName == "com.google.android.apps.youtube.music" ||
+                            it.label.contains("YouTube Music", ignoreCase = true) ||
+                            it.label.contains("YT Music", ignoreCase = true)
+                }
+                return if (match != null) AppMatchResult.Exact(match) else AppMatchResult.NotFound(query)
             }
-            "whatsapp", "wa", "whats app" -> {
-                installedApps.firstOrNull { it.packageName == "com.whatsapp" }
+            "youtube", "yt", "you tube" -> {
+                val match = installedApps.firstOrNull {
+                    (it.packageName == "com.google.android.youtube" || it.label.equals("YouTube", ignoreCase = true)) &&
+                            !it.label.contains("Music", ignoreCase = true) &&
+                            !it.label.contains("Kids", ignoreCase = true) &&
+                            !it.label.contains("Studio", ignoreCase = true)
+                }
+                return if (match != null) AppMatchResult.Exact(match) else AppMatchResult.NotFound(query)
             }
             "instagram", "insta", "ig" -> {
-                installedApps.firstOrNull { it.packageName == "com.instagram.android" }
+                val match = installedApps.firstOrNull {
+                    it.packageName == "com.instagram.android" || it.label.equals("Instagram", ignoreCase = true)
+                }
+                return if (match != null) AppMatchResult.Exact(match) else AppMatchResult.NotFound(query)
+            }
+            "whatsapp", "wa", "whats app" -> {
+                val match = installedApps.firstOrNull {
+                    it.packageName == "com.whatsapp" || it.packageName == "com.whatsapp.w4b" || it.label.equals("WhatsApp", ignoreCase = true)
+                }
+                return if (match != null) AppMatchResult.Exact(match) else AppMatchResult.NotFound(query)
             }
             "chrome", "google chrome" -> {
-                installedApps.firstOrNull { it.packageName == "com.android.chrome" }
+                val match = installedApps.firstOrNull {
+                    it.packageName == "com.android.chrome" || it.label.equals("Chrome", ignoreCase = true) || it.label.equals("Google Chrome", ignoreCase = true)
+                }
+                return if (match != null) AppMatchResult.Exact(match) else AppMatchResult.NotFound(query)
+            }
+            "gmail", "email" -> {
+                val match = installedApps.firstOrNull {
+                    it.packageName == "com.google.android.gm" || it.label.equals("Gmail", ignoreCase = true)
+                }
+                return if (match != null) AppMatchResult.Exact(match) else AppMatchResult.NotFound(query)
             }
             "spotify" -> {
-                installedApps.firstOrNull { it.packageName == "com.spotify.music" }
+                val match = installedApps.firstOrNull {
+                    it.packageName == "com.spotify.music" || it.label.equals("Spotify", ignoreCase = true)
+                }
+                return if (match != null) AppMatchResult.Exact(match) else AppMatchResult.NotFound(query)
             }
             "maps", "google maps" -> {
-                installedApps.firstOrNull { it.packageName == "com.google.android.apps.maps" }
+                val match = installedApps.firstOrNull {
+                    it.packageName == "com.google.android.apps.maps" || it.label.equals("Maps", ignoreCase = true) || it.label.equals("Google Maps", ignoreCase = true)
+                }
+                return if (match != null) AppMatchResult.Exact(match) else AppMatchResult.NotFound(query)
             }
-            else -> null
-        }
-        if (deterministicMatch != null) {
-            return AppMatchResult.Exact(deterministicMatch)
+            "camera" -> {
+                val match = installedApps.firstOrNull {
+                    it.packageName.contains("camera") || it.label.equals("Camera", ignoreCase = true)
+                }
+                return if (match != null) AppMatchResult.Exact(match) else AppMatchResult.NotFound(query)
+            }
+            "contacts", "phonebook" -> {
+                val match = installedApps.firstOrNull {
+                    it.packageName.contains("contacts") || it.label.equals("Contacts", ignoreCase = true)
+                }
+                return if (match != null) AppMatchResult.Exact(match) else AppMatchResult.NotFound(query)
+            }
+            "settings", "phone settings" -> {
+                val match = installedApps.firstOrNull {
+                    it.packageName == "com.android.settings" || it.label.equals("Settings", ignoreCase = true)
+                }
+                return if (match != null) AppMatchResult.Exact(match) else AppMatchResult.NotFound(query)
+            }
+            "play store", "google play", "playstore" -> {
+                val match = installedApps.firstOrNull {
+                    it.packageName == "com.android.vending" || it.label.contains("Play Store", ignoreCase = true)
+                }
+                return if (match != null) AppMatchResult.Exact(match) else AppMatchResult.NotFound(query)
+            }
         }
 
         // 1. Exact alias match

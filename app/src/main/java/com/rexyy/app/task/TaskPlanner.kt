@@ -43,7 +43,9 @@ object TaskPlanner {
 
         // Limit to max 8 steps for safety
         val validSteps = mutableListOf<TaskStep>()
-        for ((index, part) in parts.take(8).withIndex()) {
+        for ((index, rawPart) in parts.take(8).withIndex()) {
+            val part = rawPart.replace("^(?i)(and then|aur phir|and|aur|then|phir)\\s+".toRegex(), "").trim()
+            if (part.isBlank()) continue
             val cmd = parseSingleCommand(part)
             if (cmd !is VoiceCommand.AiChat) {
                 validSteps.add(

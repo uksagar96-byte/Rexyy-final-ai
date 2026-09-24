@@ -3,13 +3,11 @@ package com.rexyy.app.ui.main
 import android.Manifest
 import android.content.Context
 import android.content.Intent
-import android.hardware.camera2.CameraManager
 import android.net.Uri
 import android.provider.Settings
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateFloat
@@ -26,8 +24,6 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.ExperimentalLayoutApi
-import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -44,33 +40,27 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Chat
-import androidx.compose.material.icons.automirrored.filled.VolumeUp
 import androidx.compose.material.icons.filled.Bolt
 import androidx.compose.material.icons.filled.CheckCircle
-import androidx.compose.material.icons.filled.Error
+import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material.icons.outlined.BatteryChargingFull
 import androidx.compose.material.icons.outlined.Bolt
 import androidx.compose.material.icons.outlined.BugReport
-import androidx.compose.material.icons.outlined.CheckCircle
-import androidx.compose.material.icons.outlined.FlashlightOn
 import androidx.compose.material.icons.outlined.Info
 import androidx.compose.material.icons.outlined.Memory
-import androidx.compose.material.icons.outlined.Mic
-import androidx.compose.material.icons.outlined.NetworkCheck
-import androidx.compose.material.icons.outlined.Search
 import androidx.compose.material.icons.outlined.Security
 import androidx.compose.material.icons.outlined.Send
 import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material.icons.outlined.Speed
+import androidx.compose.material.icons.outlined.Storage
 import androidx.compose.material.icons.outlined.Tune
-import androidx.compose.material.icons.outlined.Warning
+import androidx.compose.material.icons.outlined.VolumeUp
 import androidx.compose.material.icons.outlined.Wifi
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
-import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -107,7 +97,6 @@ import com.rexyy.app.service.RexyyAssistantServiceState
 import com.rexyy.app.ui.avatar.AssistantState
 import com.rexyy.app.ui.avatar.RexyyAvatar3D
 import com.rexyy.app.ui.chat.ChatUiState
-import com.rexyy.app.ui.chat.CommandPillState
 import com.rexyy.app.ui.theme.RexyyAmberWarning
 import com.rexyy.app.ui.theme.RexyyCyanLight
 import com.rexyy.app.ui.theme.RexyyCyanPrimary
@@ -122,7 +111,6 @@ import com.rexyy.app.ui.theme.RexyyTextSecondary
 import com.rexyy.app.voice.VoiceState
 import kotlinx.coroutines.delay
 
-@OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun MainAssistantScreen(
     uiState: ChatUiState,
@@ -148,10 +136,6 @@ fun MainAssistantScreen(
     val telemetry by telemetryManager.telemetry.collectAsState()
 
     val isBgRunning by RexyyAssistantServiceState.serviceRunning.collectAsState()
-
-    var showSearchDialog by remember { mutableStateOf(false) }
-    var searchQuery by remember { mutableStateOf("") }
-    var selectedSearchTarget by remember { mutableStateOf("youtube") }
 
     var showVerificationSheet by remember { mutableStateOf(false) }
     var commandInputText by remember { mutableStateOf("") }
@@ -184,279 +168,354 @@ fun MainAssistantScreen(
             modifier = Modifier
                 .fillMaxSize()
                 .verticalScroll(rememberScrollState())
-                .padding(horizontal = 16.dp, vertical = 12.dp),
+                .padding(horizontal = 18.dp, vertical = 14.dp),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
             // ==========================================
-            // 1. TOP HUD / STATUS BAR
+            // 1. TOP BAR: BRANDING & LIVE ASSISTANT STATE
             // ==========================================
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.SpaceBetween
             ) {
-                // Identity & Status Dot
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Box(
-                        modifier = Modifier
-                            .size(10.dp)
-                            .clip(CircleShape)
-                            .background(
-                                if (isListening) RexyyCyanPrimary
-                                else if (uiState.isRexyyActivated) RexyyNeonGreen
-                                else RexyyAmberWarning
-                            )
+                // Identity
+                Column {
+                    Text(
+                        text = "REXXY",
+                        style = MaterialTheme.typography.titleLarge.copy(
+                            fontWeight = FontWeight.Black,
+                            letterSpacing = 3.sp,
+                            color = Color.White,
+                            fontSize = 22.sp
+                        )
                     )
-                    Spacer(modifier = Modifier.width(8.dp))
-                    Column {
-                        Text(
-                            text = "REXYY // PHONE COMMANDER",
-                            style = MaterialTheme.typography.titleSmall.copy(
-                                fontWeight = FontWeight.Black,
-                                letterSpacing = 1.2.sp,
-                                color = RexyyCyanPrimary
-                            )
+                    Text(
+                        text = "YOUR AI ASSISTANT",
+                        style = MaterialTheme.typography.labelSmall.copy(
+                            fontWeight = FontWeight.Bold,
+                            letterSpacing = 2.sp,
+                            color = RexyyCyanLight,
+                            fontSize = 10.sp
                         )
-                        Text(
-                            text = if (uiState.isRexyyActivated) {
-                                if (isBgRunning) "ONLINE // BACKGROUND ACTIVE" else "ONLINE // READY"
-                            } else {
-                                "STANDBY // ACTIVATION REQUIRED"
-                            },
-                            style = MaterialTheme.typography.labelSmall.copy(
-                                color = if (uiState.isRexyyActivated) RexyyNeonGreen else RexyyAmberWarning,
-                                fontSize = 10.sp,
-                                fontWeight = FontWeight.SemiBold
-                            )
-                        )
-                    }
+                    )
                 }
 
-                // Top Action Buttons
+                // Status Badge & Navigation Icons
                 Row(verticalAlignment = Alignment.CenterVertically) {
+                    // Live State Indicator Pill
+                    val (stateLabel, stateColor) = when {
+                        uiState.errorMessage != null -> Pair("ALERT", Color(0xFFFF5252))
+                        isListening -> Pair("LISTENING", RexyyCyanPrimary)
+                        uiState.voiceState == VoiceState.PROCESSING || uiState.isLoading -> Pair("WORKING", Color(0xFFB388FF))
+                        uiState.voiceState == VoiceState.SPEAKING -> Pair("SPEAKING", RexyyNeonGreen)
+                        uiState.isRexyyActivated -> if (isBgRunning) Pair("ONLINE", RexyyNeonGreen) else Pair("STANDBY", RexyyCyanLight)
+                        else -> Pair("NOT ARMED", RexyyAmberWarning)
+                    }
+
+                    Box(
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(20.dp))
+                            .background(RexyyDarkSurface)
+                            .border(1.dp, stateColor.copy(alpha = 0.5f), RoundedCornerShape(20.dp))
+                            .padding(horizontal = 9.dp, vertical = 4.dp),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Box(
+                                modifier = Modifier
+                                    .size(6.dp)
+                                    .clip(CircleShape)
+                                    .background(stateColor)
+                            )
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text(
+                                text = stateLabel,
+                                style = MaterialTheme.typography.labelSmall.copy(
+                                    color = stateColor,
+                                    fontSize = 10.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    letterSpacing = 1.sp
+                                )
+                            )
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.width(6.dp))
+
                     IconButton(
                         onClick = onOpenControlCenter,
-                        modifier = Modifier.testTag("open_control_center_top_button")
+                        modifier = Modifier.size(36.dp).testTag("open_control_center_top_button")
                     ) {
                         Icon(
                             imageVector = Icons.Outlined.Tune,
                             contentDescription = "Control Center",
-                            tint = RexyyCyanLight,
-                            modifier = Modifier.size(20.dp)
+                            tint = RexyyTextPrimary,
+                            modifier = Modifier.size(18.dp)
                         )
                     }
+
                     IconButton(
                         onClick = onOpenPermissions,
-                        modifier = Modifier.testTag("open_permissions_button")
+                        modifier = Modifier.size(36.dp).testTag("open_permissions_button")
                     ) {
                         Icon(
                             imageVector = Icons.Outlined.Security,
-                            contentDescription = "Capabilities",
+                            contentDescription = "Permissions",
                             tint = RexyyTextPrimary,
-                            modifier = Modifier.size(20.dp)
+                            modifier = Modifier.size(18.dp)
                         )
                     }
+
                     IconButton(
                         onClick = onOpenDevConsole,
-                        modifier = Modifier.testTag("open_dev_console_button")
+                        modifier = Modifier.size(36.dp).testTag("open_dev_console_button")
                     ) {
                         Icon(
                             imageVector = Icons.Outlined.BugReport,
                             contentDescription = "Dev Console",
                             tint = RexyyTextPrimary,
-                            modifier = Modifier.size(20.dp)
+                            modifier = Modifier.size(18.dp)
                         )
                     }
+
                     IconButton(
                         onClick = onOpenSettings,
-                        modifier = Modifier.testTag("open_settings_button")
+                        modifier = Modifier.size(36.dp).testTag("open_settings_button")
                     ) {
                         Icon(
                             imageVector = Icons.Outlined.Settings,
                             contentDescription = "Settings",
                             tint = RexyyTextPrimary,
-                            modifier = Modifier.size(20.dp)
+                            modifier = Modifier.size(18.dp)
                         )
                     }
                 }
             }
 
-            Spacer(modifier = Modifier.height(12.dp))
-
-            // ==========================================
-            // 2. DYNAMIC-ISLAND STYLE COMMAND PILL
-            // ==========================================
-            DynamicCommandPill(
-                uiState = uiState,
-                isBgRunning = isBgRunning,
-                onMicClick = {
-                    if (isListening) {
-                        onStopListening()
-                    } else {
-                        if (CapabilityManager.hasPermission(context, Manifest.permission.RECORD_AUDIO)) {
-                            onStartListening()
-                        } else {
-                            micPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
-                        }
-                    }
-                },
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .testTag("dynamic_command_pill")
-            )
-
-            Spacer(modifier = Modifier.height(14.dp))
-
-            // Status Pills Bar: FPS, BG Service, Battery, RAM
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(6.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                // Prominent Real FPS Indicator
-                HudPill(
-                    label = "⚡ ${telemetry.fps} FPS",
-                    color = if (telemetry.fps >= 50) RexyyNeonGreen else if (telemetry.fps >= 30) RexyyCyanLight else RexyyAmberWarning,
-                    modifier = Modifier.weight(1.0f)
-                )
-
-                // Background Assistant Toggle Pill
-                HudPill(
-                    label = if (isBgRunning) "BG: ON" else "BG: OFF",
-                    color = if (isBgRunning) RexyyNeonGreen else RexyyTextMuted,
-                    onClick = {
-                        BackgroundAssistantManager.toggleAssistant(context)
-                    },
-                    modifier = Modifier.weight(0.9f)
-                )
-
-                // Battery Pill
-                HudPill(
-                    label = "🔋 ${telemetry.batteryPercent}%",
-                    color = if (telemetry.batteryPercent > 20) RexyyNeonGreen else Color(0xFFFF5252),
-                    modifier = Modifier.weight(0.9f)
-                )
-
-                // RAM Pill
-                HudPill(
-                    label = "RAM ${telemetry.ramUsagePercent}%",
-                    color = Color(0xFF2979FF),
-                    modifier = Modifier.weight(0.9f)
-                )
-            }
-
             Spacer(modifier = Modifier.height(14.dp))
 
             // ==========================================
-            // 3. ACTIVATION HERO OR 3D AVATAR CORE
+            // 2. ACTIVATION BANNER (VISIBLE WHEN INCOMPLETE)
             // ==========================================
             if (!uiState.isRexyyActivated) {
-                // Not Activated: Prominent Activation Center Hero
-                ActivationHeroCard(
-                    onActivateClick = { showVerificationSheet = true },
-                    onLearnMoreClick = { onShowIntro(true) },
-                    modifier = Modifier.fillMaxWidth()
-                )
-            } else {
-                // Activated: Interactive 3D Holographic Core
                 Card(
-                    shape = RoundedCornerShape(20.dp),
+                    shape = RoundedCornerShape(18.dp),
                     colors = CardDefaults.cardColors(containerColor = RexyyDarkSurface),
-                    border = BorderStroke(1.dp, Brush.radialGradient(listOf(RexyyCyanPrimary.copy(alpha = 0.4f), RexyyDarkBorder))),
-                    modifier = Modifier.fillMaxWidth()
+                    border = BorderStroke(1.5.dp, Brush.horizontalGradient(listOf(RexyyCyanPrimary, RexyyNeonGreen))),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("activation_incomplete_banner")
                 ) {
-                    Column(
-                        horizontalAlignment = Alignment.CenterHorizontally,
+                    Row(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .padding(vertical = 18.dp, horizontal = 12.dp)
+                            .padding(14.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween
                     ) {
-                        Text(
-                            text = "[ ◈ REXYY CORE // ACTIVE ◈ ]",
-                            style = MaterialTheme.typography.labelSmall.copy(
-                                color = RexyyCyanLight,
-                                letterSpacing = 2.sp,
-                                fontFamily = FontFamily.Monospace,
-                                fontWeight = FontWeight.Bold
-                            )
-                        )
-
-                        Spacer(modifier = Modifier.height(8.dp))
-
-                        // 3D Avatar Sphere
-                        RexyyAvatar3D(
-                            state = assistantState,
-                            size = 190.dp,
-                            onClick = {
-                                if (isListening) {
-                                    onStopListening()
-                                } else {
-                                    if (CapabilityManager.hasPermission(context, Manifest.permission.RECORD_AUDIO)) {
-                                        onStartListening()
-                                    } else {
-                                        micPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
-                                    }
-                                }
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .size(36.dp)
+                                    .clip(CircleShape)
+                                    .background(RexyyDarkSurfaceVariant)
+                                    .border(1.dp, RexyyCyanPrimary, CircleShape),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Filled.Bolt,
+                                    contentDescription = null,
+                                    tint = RexyyCyanPrimary,
+                                    modifier = Modifier.size(20.dp)
+                                )
                             }
-                        )
-
-                        Spacer(modifier = Modifier.height(12.dp))
-
-                        // Dynamic State Banner
-                        val statusText = when {
-                            uiState.errorMessage != null -> uiState.errorMessage
-                            isListening -> "LISTENING // SPEAK COMMAND NOW"
-                            uiState.voiceState == VoiceState.PROCESSING || uiState.isLoading -> "PROCESSING // DETERMINISTIC ROUTER"
-                            uiState.voiceState == VoiceState.SPEAKING -> "TRANSMITTING SPEECH..."
-                            !uiState.lastActionFeedback.isNullOrBlank() -> uiState.lastActionFeedback
-                            else -> "SYSTEM READY // SAY 'HELLO REX' OR TAP CORE"
+                            Spacer(modifier = Modifier.width(12.dp))
+                            Column {
+                                Text(
+                                    text = "ACTIVATION REQUIRED",
+                                    style = MaterialTheme.typography.labelMedium.copy(
+                                        fontWeight = FontWeight.Bold,
+                                        letterSpacing = 1.sp,
+                                        color = RexyyCyanLight
+                                    )
+                                )
+                                Text(
+                                    text = "Configure device permissions & automation",
+                                    style = MaterialTheme.typography.labelSmall.copy(
+                                        color = RexyyTextSecondary,
+                                        fontSize = 11.sp
+                                    )
+                                )
+                            }
                         }
 
-                        Box(
-                            modifier = Modifier
-                                .fillMaxWidth(0.92f)
-                                .clip(RoundedCornerShape(12.dp))
-                                .background(RexyyDarkSurfaceVariant)
-                                .border(1.dp, if (isListening) RexyyCyanPrimary else RexyyDarkBorder, RoundedCornerShape(12.dp))
-                                .padding(horizontal = 14.dp, vertical = 8.dp),
-                            contentAlignment = Alignment.Center
+                        Button(
+                            onClick = { onShowIntro(true) },
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = RexyyCyanPrimary,
+                                contentColor = Color.Black
+                            ),
+                            shape = RoundedCornerShape(10.dp),
+                            modifier = Modifier.testTag("activate_rexyy_primary_button")
                         ) {
                             Text(
-                                text = statusText,
-                                style = MaterialTheme.typography.labelMedium.copy(
-                                    fontWeight = FontWeight.Bold,
-                                    color = if (uiState.errorMessage != null) Color(0xFFFF8A80) else if (isListening) RexyyCyanLight else RexyyTextPrimary,
-                                    fontFamily = FontFamily.Monospace
-                                ),
-                                textAlign = TextAlign.Center
+                                text = "ACTIVATE",
+                                fontWeight = FontWeight.Black,
+                                fontSize = 12.sp,
+                                letterSpacing = 1.sp
                             )
                         }
                     }
                 }
+                Spacer(modifier = Modifier.height(14.dp))
             }
 
-            // Pending Confirmation Card
+            // ==========================================
+            // 3. CENTRAL REXXY CORE (PROMINENT HERO)
+            // ==========================================
+            Card(
+                shape = RoundedCornerShape(24.dp),
+                colors = CardDefaults.cardColors(containerColor = RexyyDarkSurface),
+                border = BorderStroke(
+                    1.dp,
+                    Brush.radialGradient(
+                        colors = listOf(
+                            RexyyCyanPrimary.copy(alpha = if (isListening) 0.6f else 0.25f),
+                            RexyyDarkBorder
+                        )
+                    )
+                ),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .testTag("central_rexyy_core_card")
+            ) {
+                Column(
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(top = 20.dp, bottom = 18.dp, start = 16.dp, end = 16.dp)
+                ) {
+                    // Header tag above avatar
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.Center
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(6.dp)
+                                .clip(CircleShape)
+                                .background(if (isListening) RexyyCyanPrimary else RexyyNeonGreen)
+                        )
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text(
+                            text = if (uiState.isRexyyActivated) "REXXY NEURAL CORE // ONLINE" else "REXXY CORE // STANDBY",
+                            style = MaterialTheme.typography.labelSmall.copy(
+                                color = RexyyCyanLight,
+                                letterSpacing = 1.5.sp,
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 10.sp
+                            )
+                        )
+                    }
+
+                    Spacer(modifier = Modifier.height(12.dp))
+
+                    // Prominent Large Central 3D Avatar (Size 260.dp)
+                    RexyyAvatar3D(
+                        state = assistantState,
+                        size = 260.dp,
+                        onClick = {
+                            if (isListening) {
+                                onStopListening()
+                            } else {
+                                if (CapabilityManager.hasPermission(context, Manifest.permission.RECORD_AUDIO)) {
+                                    onStartListening()
+                                } else {
+                                    micPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
+                                }
+                            }
+                        }
+                    )
+
+                    Spacer(modifier = Modifier.height(14.dp))
+
+                    // Real-time Dynamic Status Line
+                    val statusText = when {
+                        uiState.errorMessage != null -> uiState.errorMessage
+                        isListening -> "LISTENING // SPEAK YOUR COMMAND NOW"
+                        uiState.voiceState == VoiceState.PROCESSING || uiState.isLoading -> "PROCESSING // DETERMINISTIC ROUTING"
+                        uiState.voiceState == VoiceState.SPEAKING -> "TRANSMITTING SPEECH RESPONSE"
+                        !uiState.lastActionFeedback.isNullOrBlank() -> uiState.lastActionFeedback
+                        isBgRunning -> "STANDBY // SAY 'HELLO REX' OR TAP CORE"
+                        else -> "STANDBY // TAP CORE TO COMMAND"
+                    }
+
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth(0.95f)
+                            .clip(RoundedCornerShape(12.dp))
+                            .background(RexyyDarkSurfaceVariant)
+                            .border(
+                                1.dp,
+                                if (isListening) RexyyCyanPrimary.copy(alpha = 0.8f) else RexyyDarkBorder,
+                                RoundedCornerShape(12.dp)
+                            )
+                            .padding(horizontal = 14.dp, vertical = 9.dp),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(
+                            text = statusText ?: "SYSTEM READY",
+                            style = MaterialTheme.typography.bodySmall.copy(
+                                fontWeight = FontWeight.SemiBold,
+                                color = if (uiState.errorMessage != null) Color(0xFFFF8A80)
+                                else if (isListening) RexyyCyanLight
+                                else RexyyTextPrimary,
+                                fontSize = 11.sp
+                            ),
+                            textAlign = TextAlign.Center,
+                            maxLines = 2
+                        )
+                    }
+                }
+            }
+
+            // ==========================================
+            // 4. SECURITY CONFIRMATION (DANGEROUS ACTIONS)
+            // ==========================================
             if (uiState.pendingConfirmation != null) {
-                Spacer(modifier = Modifier.height(12.dp))
+                Spacer(modifier = Modifier.height(14.dp))
                 Card(
-                    shape = RoundedCornerShape(16.dp),
+                    shape = RoundedCornerShape(18.dp),
                     colors = CardDefaults.cardColors(containerColor = RexyyDarkSurface),
-                    border = BorderStroke(1.5.dp, RexyyCyanPrimary),
+                    border = BorderStroke(1.5.dp, RexyyAmberWarning),
                     modifier = Modifier.fillMaxWidth()
                 ) {
                     Column(modifier = Modifier.padding(16.dp)) {
-                        Text(
-                            text = "SECURITY CONFIRMATION REQUIRED",
-                            style = MaterialTheme.typography.labelSmall.copy(
-                                fontWeight = FontWeight.Bold,
-                                letterSpacing = 1.2.sp,
-                                color = RexyyCyanPrimary
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Icon(
+                                imageVector = Icons.Filled.Warning,
+                                contentDescription = null,
+                                tint = RexyyAmberWarning,
+                                modifier = Modifier.size(18.dp)
                             )
-                        )
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text(
+                                text = "SECURITY CONFIRMATION REQUIRED",
+                                style = MaterialTheme.typography.labelSmall.copy(
+                                    fontWeight = FontWeight.Bold,
+                                    letterSpacing = 1.2.sp,
+                                    color = RexyyAmberWarning
+                                )
+                            )
+                        }
                         Spacer(modifier = Modifier.height(6.dp))
                         Text(
                             text = uiState.pendingConfirmation.prompt,
-                            style = MaterialTheme.typography.bodyLarge.copy(
+                            style = MaterialTheme.typography.bodyMedium.copy(
                                 fontWeight = FontWeight.Medium,
                                 color = RexyyTextPrimary
                             )
@@ -481,7 +540,7 @@ fun MainAssistantScreen(
                 }
             }
 
-            // Task In Progress Card
+            // Active Multi-step Task Plan Card
             if (uiState.activeTaskPlan != null && !uiState.activeTaskPlan.isFinished) {
                 Spacer(modifier = Modifier.height(12.dp))
                 Card(
@@ -518,10 +577,10 @@ fun MainAssistantScreen(
                 }
             }
 
-            Spacer(modifier = Modifier.height(14.dp))
+            Spacer(modifier = Modifier.height(16.dp))
 
             // ==========================================
-            // 4. REAL-TIME TELEMETRY MATRIX (HUD GRID)
+            // 5. LIVE SYSTEM TELEMETRY MATRIX (REAL VALUES)
             // ==========================================
             Row(
                 modifier = Modifier.fillMaxWidth(),
@@ -529,7 +588,7 @@ fun MainAssistantScreen(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Text(
-                    text = "DEVICE TELEMETRY & HARDWARE",
+                    text = "REAL-TIME TELEMETRY MATRIX",
                     style = MaterialTheme.typography.labelSmall.copy(
                         fontWeight = FontWeight.Bold,
                         letterSpacing = 1.2.sp,
@@ -537,9 +596,9 @@ fun MainAssistantScreen(
                     )
                 )
                 Text(
-                    text = "FPS: ${telemetry.fps} // REAL SENSORS",
+                    text = "${telemetry.fps} FPS // LIVE",
                     style = MaterialTheme.typography.labelSmall.copy(
-                        color = RexyyNeonGreen,
+                        color = if (telemetry.fps >= 50) RexyyNeonGreen else RexyyCyanPrimary,
                         fontSize = 10.sp,
                         fontWeight = FontWeight.Bold
                     )
@@ -548,20 +607,21 @@ fun MainAssistantScreen(
 
             Spacer(modifier = Modifier.height(8.dp))
 
+            // Row 1: FPS, POWER, RAM
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                TelemetryMiniCard(
+                TelemetryCard(
                     icon = Icons.Outlined.Speed,
                     title = "FPS",
                     value = "${telemetry.fps}",
-                    sub = if (telemetry.fps >= 50) "Smooth 60Hz" else "Real Frame",
+                    sub = if (telemetry.fps >= 50) "Hardware 60Hz" else "Real Frame",
                     accent = if (telemetry.fps >= 50) RexyyNeonGreen else RexyyCyanPrimary,
                     modifier = Modifier.weight(1f)
                 )
 
-                TelemetryMiniCard(
+                TelemetryCard(
                     icon = Icons.Outlined.BatteryChargingFull,
                     title = "POWER",
                     value = "${telemetry.batteryPercent}%",
@@ -570,7 +630,7 @@ fun MainAssistantScreen(
                     modifier = Modifier.weight(1f)
                 )
 
-                TelemetryMiniCard(
+                TelemetryCard(
                     icon = Icons.Outlined.Memory,
                     title = "RAM",
                     value = "${telemetry.usedRamGb}G",
@@ -578,136 +638,48 @@ fun MainAssistantScreen(
                     accent = RexyyCyanPrimary,
                     modifier = Modifier.weight(1f)
                 )
-
-                TelemetryMiniCard(
-                    icon = Icons.Outlined.NetworkCheck,
-                    title = "NET",
-                    value = if (telemetry.isWifiConnected) "Wi-Fi" else if (telemetry.isCellularConnected) "Data" else "Offline",
-                    sub = if (telemetry.isWifiConnected) "Online" else telemetry.cellularType,
-                    accent = if (telemetry.isWifiConnected) RexyyCyanPrimary else if (telemetry.isCellularConnected) RexyyNeonGreen else Color(0xFFFF8A80),
-                    modifier = Modifier.weight(1f)
-                )
             }
 
             Spacer(modifier = Modifier.height(8.dp))
 
+            // Row 2: STORAGE, NETWORK, VOLUME
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                TelemetryMiniCard(
-                    icon = Icons.AutoMirrored.Filled.VolumeUp,
-                    title = "AUDIO",
-                    value = "${telemetry.mediaVolumePercent}%",
-                    sub = "Volume",
-                    accent = Color(0xFF2979FF),
-                    modifier = Modifier.weight(1f)
-                )
-
-                TelemetryMiniCard(
-                    icon = Icons.Outlined.Bolt,
-                    title = "BRIGHTNESS",
-                    value = "${telemetry.screenBrightnessPercent}%",
-                    sub = "Display",
-                    accent = Color(0xFFFFB300),
-                    modifier = Modifier.weight(1f)
-                )
-
-                TelemetryMiniCard(
-                    icon = Icons.Outlined.StorageIcon,
+                TelemetryCard(
+                    icon = Icons.Outlined.Storage,
                     title = "STORAGE",
-                    value = "${telemetry.availableStorageGb}G",
-                    sub = "Free of ${telemetry.totalStorageGb}G",
-                    accent = Color(0xFFAB47BC),
-                    modifier = Modifier.weight(1f)
-                )
-
-                TelemetryMiniCard(
-                    icon = Icons.Outlined.Memory,
-                    title = "CPU",
-                    value = "${telemetry.cpuLoadPercent}%",
-                    sub = "${telemetry.cpuCores} Cores",
+                    value = "${telemetry.freeStorageGb}G",
+                    sub = "Free Space",
                     accent = RexyyCyanLight,
                     modifier = Modifier.weight(1f)
                 )
-            }
 
-            Spacer(modifier = Modifier.height(16.dp))
-
-            // ==========================================
-            // 5. REAL SYSTEM UTILITIES (NO DEMOS)
-            // ==========================================
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Text(
-                    text = "SYSTEM CONTROLS & UTILITIES",
-                    style = MaterialTheme.typography.labelSmall.copy(
-                        fontWeight = FontWeight.Bold,
-                        letterSpacing = 1.2.sp,
-                        color = RexyyCyanLight
-                    )
-                )
-
-                TextButton(onClick = { showSearchDialog = true }) {
-                    Icon(
-                        imageVector = Icons.Outlined.Search,
-                        contentDescription = null,
-                        tint = RexyyCyanPrimary,
-                        modifier = Modifier.size(16.dp)
-                    )
-                    Spacer(modifier = Modifier.width(4.dp))
-                    Text("Universal Search", color = RexyyCyanPrimary, style = MaterialTheme.typography.labelSmall)
-                }
-            }
-
-            Spacer(modifier = Modifier.height(6.dp))
-
-            FlowRow(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                verticalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                SystemUtilityChip(
-                    icon = Icons.Outlined.FlashlightOn,
-                    label = "Toggle Flashlight",
-                    onClick = { toggleTorchDirect(context) }
-                )
-                SystemUtilityChip(
-                    icon = Icons.Outlined.Settings,
-                    label = "System Settings",
-                    onClick = { onQuickCommand("Open settings") }
-                )
-                SystemUtilityChip(
+                TelemetryCard(
                     icon = Icons.Outlined.Wifi,
-                    label = "Wi-Fi Settings",
-                    onClick = { onQuickCommand("Open wifi settings") }
+                    title = "LINK",
+                    value = if (telemetry.isWifiConnected) "Wi-Fi" else if (telemetry.isCellularConnected) telemetry.cellularType else "Offline",
+                    sub = if (telemetry.isWifiConnected || telemetry.isCellularConnected) "Connected" else "No Link",
+                    accent = if (telemetry.isWifiConnected || telemetry.isCellularConnected) RexyyNeonGreen else Color(0xFFFF8A80),
+                    modifier = Modifier.weight(1f)
                 )
-                SystemUtilityChip(
-                    icon = Icons.AutoMirrored.Filled.VolumeUp,
-                    label = "Max Volume",
-                    onClick = { onQuickCommand("Volume 100") }
-                )
-                SystemUtilityChip(
-                    icon = Icons.Outlined.Security,
-                    label = "Verification Center",
-                    onClick = { showVerificationSheet = true }
-                )
-                SystemUtilityChip(
-                    icon = Icons.Outlined.Bolt,
-                    label = "Replay Activation",
-                    onClick = onReplayActivation
+
+                TelemetryCard(
+                    icon = Icons.Outlined.VolumeUp,
+                    title = "AUDIO",
+                    value = "${telemetry.mediaVolumePercent}%",
+                    sub = "Media Vol",
+                    accent = RexyyCyanPrimary,
+                    modifier = Modifier.weight(1f)
                 )
             }
 
-            Spacer(modifier = Modifier.height(16.dp))
+            Spacer(modifier = Modifier.height(18.dp))
 
             // ==========================================
-            // 6. COMMAND DOCK & NAVIGATION
+            // 6. CLEAN MANUAL COMMAND ENTRY (NO GIANT MIC)
             // ==========================================
-            // Text Command Input Field + Direct Send
             Card(
                 shape = RoundedCornerShape(16.dp),
                 colors = CardDefaults.cardColors(containerColor = RexyyDarkSurface),
@@ -717,35 +689,18 @@ fun MainAssistantScreen(
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(horizontal = 12.dp, vertical = 6.dp),
+                        .padding(horizontal = 12.dp, vertical = 4.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    IconButton(
-                        onClick = {
-                            if (isListening) {
-                                onStopListening()
-                            } else {
-                                if (CapabilityManager.hasPermission(context, Manifest.permission.RECORD_AUDIO)) {
-                                    onStartListening()
-                                } else {
-                                    micPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
-                                }
-                            }
-                        },
-                        modifier = Modifier.size(40.dp)
-                    ) {
-                        Icon(
-                            imageVector = Icons.Outlined.Mic,
-                            contentDescription = "Voice Input",
-                            tint = if (isListening) RexyyCyanPrimary else RexyyTextMuted
-                        )
-                    }
-
                     OutlinedTextField(
                         value = commandInputText,
                         onValueChange = { commandInputText = it },
                         placeholder = {
-                            Text("Type command (e.g. 'brightness 80', 'open camera')", color = RexyyTextMuted, fontSize = 12.sp)
+                            Text(
+                                "Enter command or ask REXXY...",
+                                color = RexyyTextMuted,
+                                fontSize = 12.sp
+                            )
                         },
                         colors = OutlinedTextFieldDefaults.colors(
                             focusedBorderColor = Color.Transparent,
@@ -779,24 +734,24 @@ fun MainAssistantScreen(
                 }
             }
 
-            Spacer(modifier = Modifier.height(10.dp))
+            Spacer(modifier = Modifier.height(12.dp))
 
-            // Navigation Row: Control Center & Chat Console
+            // Navigation Links: Control Center & Chat Console
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(bottom = 8.dp),
+                    .padding(bottom = 12.dp),
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(10.dp)
             ) {
-                // Control Center Launcher
+                // Control Center Action Card
                 Card(
-                    shape = RoundedCornerShape(16.dp),
+                    shape = RoundedCornerShape(14.dp),
                     colors = CardDefaults.cardColors(containerColor = RexyyDarkSurface),
                     border = BorderStroke(1.dp, RexyyDarkBorder),
                     modifier = Modifier
                         .weight(1f)
-                        .height(54.dp)
+                        .height(50.dp)
                         .clickable { onOpenControlCenter() }
                         .testTag("open_control_center_button")
                 ) {
@@ -808,7 +763,7 @@ fun MainAssistantScreen(
                     ) {
                         Box(
                             modifier = Modifier
-                                .size(34.dp)
+                                .size(30.dp)
                                 .clip(CircleShape)
                                 .background(RexyyDarkSurfaceVariant),
                             contentAlignment = Alignment.Center
@@ -817,7 +772,7 @@ fun MainAssistantScreen(
                                 imageVector = Icons.Outlined.Tune,
                                 contentDescription = null,
                                 tint = RexyyCyanPrimary,
-                                modifier = Modifier.size(18.dp)
+                                modifier = Modifier.size(16.dp)
                             )
                         }
                         Spacer(modifier = Modifier.width(8.dp))
@@ -827,28 +782,28 @@ fun MainAssistantScreen(
                                 style = MaterialTheme.typography.titleSmall.copy(
                                     fontWeight = FontWeight.Bold,
                                     color = RexyyTextPrimary,
-                                    fontSize = 12.sp
+                                    fontSize = 11.sp
                                 )
                             )
                             Text(
-                                text = "Hardware & Sensors",
+                                text = "Sensors & Toggles",
                                 style = MaterialTheme.typography.labelSmall.copy(
                                     color = RexyyTextMuted,
-                                    fontSize = 10.sp
+                                    fontSize = 9.sp
                                 )
                             )
                         }
                     }
                 }
 
-                // Chat Console Launcher
+                // Chat Console Action Card
                 Card(
-                    shape = RoundedCornerShape(16.dp),
+                    shape = RoundedCornerShape(14.dp),
                     colors = CardDefaults.cardColors(containerColor = RexyyDarkSurface),
                     border = BorderStroke(1.dp, RexyyDarkBorder),
                     modifier = Modifier
                         .weight(1f)
-                        .height(54.dp)
+                        .height(50.dp)
                         .clickable { onOpenChat() }
                         .testTag("open_chat_screen_button")
                 ) {
@@ -860,7 +815,7 @@ fun MainAssistantScreen(
                     ) {
                         Box(
                             modifier = Modifier
-                                .size(34.dp)
+                                .size(30.dp)
                                 .clip(CircleShape)
                                 .background(RexyyDarkSurfaceVariant),
                             contentAlignment = Alignment.Center
@@ -869,7 +824,7 @@ fun MainAssistantScreen(
                                 imageVector = Icons.AutoMirrored.Filled.Chat,
                                 contentDescription = null,
                                 tint = RexyyCyanPrimary,
-                                modifier = Modifier.size(18.dp)
+                                modifier = Modifier.size(16.dp)
                             )
                         }
                         Spacer(modifier = Modifier.width(8.dp))
@@ -879,14 +834,14 @@ fun MainAssistantScreen(
                                 style = MaterialTheme.typography.titleSmall.copy(
                                     fontWeight = FontWeight.Bold,
                                     color = RexyyTextPrimary,
-                                    fontSize = 12.sp
+                                    fontSize = 11.sp
                                 )
                             )
                             Text(
-                                text = "${uiState.messages.size} msgs in log",
+                                text = "Full Logs & AI",
                                 style = MaterialTheme.typography.labelSmall.copy(
                                     color = RexyyTextMuted,
-                                    fontSize = 10.sp
+                                    fontSize = 9.sp
                                 )
                             )
                         }
@@ -896,7 +851,7 @@ fun MainAssistantScreen(
         }
 
         // ==========================================
-        // 7. CAPABILITY VERIFICATION CENTER MODAL
+        // 7. CAPABILITY VERIFICATION CENTER DIALOG
         // ==========================================
         if (showVerificationSheet) {
             CapabilityVerificationDialog(
@@ -910,7 +865,7 @@ fun MainAssistantScreen(
         }
 
         // ==========================================
-        // 8. CINEMATIC ACTIVATION OVERLAY
+        // 8. ACTIVATION CINEMATIC OVERLAY
         // ==========================================
         if (uiState.showActivationCinematic) {
             CinematicActivationOverlay(
@@ -919,7 +874,7 @@ fun MainAssistantScreen(
         }
 
         // ==========================================
-        // 9. INTRODUCTORY MODAL (WHAT IS REXYY?)
+        // 9. INTRO INFO DIALOG
         // ==========================================
         if (uiState.showIntroDialog) {
             AlertDialog(
@@ -945,18 +900,18 @@ fun MainAssistantScreen(
                         verticalArrangement = Arrangement.spacedBy(10.dp)
                     ) {
                         Text(
-                            text = "REXXY is a professional personal AI assistant and Android phone commander.",
+                            text = "REXXY is your personal on-device AI assistant and Android system commander.",
                             style = MaterialTheme.typography.bodyMedium.copy(
                                 color = RexyyTextPrimary,
                                 fontWeight = FontWeight.SemiBold
                             )
                         )
                         Text(
-                            text = "• Local-First Phone Control: Simple phone actions (torch, volume, brightness, apps, alarms, calls, WhatsApp, accessibility) execute locally with zero latency, without relying on cloud models.\n\n" +
-                                    "• Deterministic Security: Dangerous actions require your explicit confirmation before executing.\n\n" +
+                            text = "• Local-First Phone Control: Device operations (torch, volume, brightness, apps, alarms, calls, WhatsApp, accessibility) execute locally with zero latency.\n\n" +
+                                    "• Deterministic Security: Protected actions require your explicit confirmation before executing.\n\n" +
                                     "• Notification Intelligence: Listens to incoming notifications and announces who messaged you.\n\n" +
-                                    "• Full Telemetry: Real frame rate (FPS), CPU, RAM, battery charging, and network telemetry.\n\n" +
-                                    "• Seamless Fallback: Conversational knowledge queries route to advanced generative AI (Gemini / OpenAI / OpenRouter).",
+                                    "• Real System Telemetry: Real frame rate (FPS), CPU, RAM, battery charging, and network telemetry.\n\n" +
+                                    "• Cloud AI Fallback: Complex general knowledge queries route to advanced generative AI (Gemini / OpenAI / OpenRouter).",
                             style = MaterialTheme.typography.bodySmall.copy(
                                 color = RexyyTextSecondary,
                                 lineHeight = 18.sp
@@ -968,11 +923,11 @@ fun MainAssistantScreen(
                     Button(
                         onClick = {
                             onShowIntro(false)
-                            showVerificationSheet = true
+                            onOpenPermissions()
                         },
                         colors = ButtonDefaults.buttonColors(containerColor = RexyyCyanPrimary)
                     ) {
-                        Text("Proceed to Activation", color = Color.Black, fontWeight = FontWeight.Bold)
+                        Text("Open Capability Center", color = Color.Black, fontWeight = FontWeight.Bold)
                     }
                 },
                 dismissButton = {
@@ -982,322 +937,64 @@ fun MainAssistantScreen(
                 }
             )
         }
-
-        // ==========================================
-        // 10. UNIVERSAL SEARCH DIALOG
-        // ==========================================
-        if (showSearchDialog) {
-            AlertDialog(
-                onDismissRequest = { showSearchDialog = false },
-                containerColor = RexyyDarkSurface,
-                title = {
-                    Text(
-                        text = "UNIVERSAL SEARCH",
-                        style = MaterialTheme.typography.titleMedium.copy(
-                            fontWeight = FontWeight.Bold,
-                            color = RexyyCyanPrimary,
-                            letterSpacing = 1.sp
-                        )
-                    )
-                },
-                text = {
-                    Column {
-                        Text(
-                            text = "Search directly across YouTube, Chrome, Maps, or Spotify:",
-                            style = MaterialTheme.typography.bodySmall.copy(color = RexyyTextSecondary)
-                        )
-
-                        Spacer(modifier = Modifier.height(10.dp))
-
-                        // Target Selector
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.spacedBy(6.dp)
-                        ) {
-                            SearchTargetPill("YouTube", "youtube", selectedSearchTarget) { selectedSearchTarget = it }
-                            SearchTargetPill("Chrome", "chrome", selectedSearchTarget) { selectedSearchTarget = it }
-                            SearchTargetPill("Maps", "maps", selectedSearchTarget) { selectedSearchTarget = it }
-                            SearchTargetPill("Spotify", "spotify", selectedSearchTarget) { selectedSearchTarget = it }
-                        }
-
-                        Spacer(modifier = Modifier.height(12.dp))
-
-                        OutlinedTextField(
-                            value = searchQuery,
-                            onValueChange = { searchQuery = it },
-                            placeholder = { Text("Enter search query...", color = RexyyTextMuted) },
-                            colors = OutlinedTextFieldDefaults.colors(
-                                focusedBorderColor = RexyyCyanPrimary,
-                                unfocusedBorderColor = RexyyDarkBorder,
-                                focusedTextColor = RexyyTextPrimary,
-                                unfocusedTextColor = RexyyTextPrimary
-                            ),
-                            shape = RoundedCornerShape(10.dp),
-                            modifier = Modifier.fillMaxWidth(),
-                            singleLine = true
-                        )
-                    }
-                },
-                confirmButton = {
-                    Button(
-                        onClick = {
-                            if (searchQuery.isNotBlank()) {
-                                onQuickCommand("Search $searchQuery on $selectedSearchTarget")
-                                showSearchDialog = false
-                                searchQuery = ""
-                            }
-                        },
-                        colors = ButtonDefaults.buttonColors(containerColor = RexyyCyanPrimary)
-                    ) {
-                        Text("Search", color = Color.Black, fontWeight = FontWeight.Bold)
-                    }
-                },
-                dismissButton = {
-                    TextButton(onClick = { showSearchDialog = false }) {
-                        Text("Cancel", color = RexyyTextMuted)
-                    }
-                }
-            )
-        }
     }
 }
 
 // ==========================================
-// DYNAMIC-ISLAND STYLE COMMAND PILL
+// TELEMETRY CARD COMPONENT
 // ==========================================
 @Composable
-private fun DynamicCommandPill(
-    uiState: ChatUiState,
-    isBgRunning: Boolean,
-    onMicClick: () -> Unit,
-    modifier: Modifier = Modifier
-) {
-    val pillState = uiState.commandPillState
-    val isListening = uiState.voiceState == VoiceState.LISTENING
-
-    val (borderColor, containerColor) = when {
-        pillState == CommandPillState.LISTENING || isListening -> Pair(RexyyCyanPrimary, RexyyDarkSurfaceVariant)
-        pillState == CommandPillState.WORKING -> Pair(Color(0xFF80D8FF), RexyyDarkSurface)
-        pillState == CommandPillState.SUCCESS -> Pair(RexyyNeonGreen, RexyyDarkSurface)
-        pillState == CommandPillState.ERROR || uiState.errorMessage != null -> Pair(Color(0xFFFF5252), RexyyDarkSurface)
-        else -> Pair(RexyyDarkBorder, RexyyDarkSurface)
-    }
-
-    Card(
-        shape = RoundedCornerShape(24.dp),
-        colors = CardDefaults.cardColors(containerColor = containerColor),
-        border = BorderStroke(1.5.dp, borderColor),
-        modifier = modifier.clickable { onMicClick() }
-    ) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 14.dp, vertical = 10.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.SpaceBetween
-        ) {
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                modifier = Modifier.weight(1f)
-            ) {
-                // Leading indicator
-                when {
-                    pillState == CommandPillState.LISTENING || isListening -> {
-                        PulsingWaveIndicator()
-                    }
-                    pillState == CommandPillState.WORKING -> {
-                        CircularProgressIndicator(
-                            modifier = Modifier.size(16.dp),
-                            color = RexyyCyanPrimary,
-                            strokeWidth = 2.dp
-                        )
-                    }
-                    pillState == CommandPillState.SUCCESS -> {
-                        Icon(
-                            imageVector = Icons.Filled.CheckCircle,
-                            contentDescription = null,
-                            tint = RexyyNeonGreen,
-                            modifier = Modifier.size(18.dp)
-                        )
-                    }
-                    pillState == CommandPillState.ERROR || uiState.errorMessage != null -> {
-                        Icon(
-                            imageVector = Icons.Filled.Error,
-                            contentDescription = null,
-                            tint = Color(0xFFFF5252),
-                            modifier = Modifier.size(18.dp)
-                        )
-                    }
-                    else -> {
-                        Box(
-                            modifier = Modifier
-                                .size(8.dp)
-                                .clip(CircleShape)
-                                .background(if (isBgRunning) RexyyNeonGreen else RexyyCyanLight)
-                        )
-                    }
-                }
-
-                Spacer(modifier = Modifier.width(10.dp))
-
-                // Text payload
-                val displayText = when {
-                    pillState == CommandPillState.LISTENING || isListening -> "LISTENING // SPEAK YOUR COMMAND..."
-                    pillState == CommandPillState.WORKING -> "EXECUTING: ${uiState.lastRecognizedCommand ?: "Processing"}"
-                    pillState == CommandPillState.SUCCESS -> uiState.lastActionFeedback ?: "Command executed successfully"
-                    pillState == CommandPillState.ERROR || uiState.errorMessage != null -> uiState.errorMessage ?: "Action failed"
-                    isBgRunning -> "● LIVE BACKGROUND ASSISTANT ACTIVE"
-                    uiState.isRexyyActivated -> "REXXY COMMAND CENTER // STANDBY"
-                    else -> "REXXY // TAP ACTIVATE TO INITIALIZE"
-                }
-
-                Text(
-                    text = displayText,
-                    style = MaterialTheme.typography.labelSmall.copy(
-                        fontWeight = FontWeight.Bold,
-                        color = when {
-                            pillState == CommandPillState.LISTENING || isListening -> RexyyCyanLight
-                            pillState == CommandPillState.SUCCESS -> RexyyNeonGreen
-                            pillState == CommandPillState.ERROR || uiState.errorMessage != null -> Color(0xFFFF8A80)
-                            else -> RexyyTextPrimary
-                        },
-                        fontSize = 11.sp,
-                        fontFamily = FontFamily.Monospace
-                    ),
-                    maxLines = 1
-                )
-            }
-
-            // Trailing Mic Icon
-            Box(
-                modifier = Modifier
-                    .size(28.dp)
-                    .clip(CircleShape)
-                    .background(if (isListening) RexyyCyanPrimary else RexyyDarkSurfaceVariant),
-                contentAlignment = Alignment.Center
-            ) {
-                Icon(
-                    imageVector = Icons.Outlined.Mic,
-                    contentDescription = "Mic",
-                    tint = if (isListening) Color.Black else RexyyCyanLight,
-                    modifier = Modifier.size(16.dp)
-                )
-            }
-        }
-    }
-}
-
-@Composable
-private fun PulsingWaveIndicator() {
-    val infiniteTransition = rememberInfiniteTransition(label = "wave")
-    val alpha by infiniteTransition.animateFloat(
-        initialValue = 0.3f,
-        targetValue = 1f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(400, easing = LinearEasing),
-            repeatMode = RepeatMode.Reverse
-        ),
-        label = "pulse"
-    )
-
-    Row(horizontalArrangement = Arrangement.spacedBy(2.dp)) {
-        Box(modifier = Modifier.size(3.dp, 12.dp).background(RexyyCyanPrimary.copy(alpha = alpha)))
-        Box(modifier = Modifier.size(3.dp, 16.dp).background(RexyyCyanPrimary))
-        Box(modifier = Modifier.size(3.dp, 8.dp).background(RexyyCyanPrimary.copy(alpha = alpha)))
-    }
-}
-
-// ==========================================
-// ACTIVATION HERO CARD (WHEN NOT ACTIVATED)
-// ==========================================
-@Composable
-private fun ActivationHeroCard(
-    onActivateClick: () -> Unit,
-    onLearnMoreClick: () -> Unit,
+private fun TelemetryCard(
+    icon: ImageVector,
+    title: String,
+    value: String,
+    sub: String,
+    accent: Color,
     modifier: Modifier = Modifier
 ) {
     Card(
-        shape = RoundedCornerShape(20.dp),
+        shape = RoundedCornerShape(12.dp),
         colors = CardDefaults.cardColors(containerColor = RexyyDarkSurface),
-        border = BorderStroke(1.5.dp, Brush.horizontalGradient(listOf(RexyyCyanPrimary, RexyyNeonGreen))),
+        border = BorderStroke(1.dp, RexyyDarkBorder),
         modifier = modifier
     ) {
-        Column(
-            modifier = Modifier.padding(20.dp),
-            horizontalAlignment = Alignment.CenterHorizontally
-        ) {
-            Box(
-                modifier = Modifier
-                    .size(64.dp)
-                    .clip(CircleShape)
-                    .background(RexyyDarkSurfaceVariant)
-                    .border(1.5.dp, RexyyCyanPrimary, CircleShape),
-                contentAlignment = Alignment.Center
-            ) {
+        Column(modifier = Modifier.padding(10.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
                 Icon(
-                    imageVector = Icons.Filled.Bolt,
+                    imageVector = icon,
                     contentDescription = null,
-                    tint = RexyyCyanPrimary,
-                    modifier = Modifier.size(36.dp)
+                    tint = accent,
+                    modifier = Modifier.size(13.dp)
                 )
-            }
-
-            Spacer(modifier = Modifier.height(12.dp))
-
-            Text(
-                text = "REXXY PHONE COMMANDER",
-                style = MaterialTheme.typography.titleMedium.copy(
-                    fontWeight = FontWeight.Black,
-                    letterSpacing = 1.5.sp,
-                    color = RexyyCyanPrimary
-                ),
-                textAlign = TextAlign.Center
-            )
-
-            Spacer(modifier = Modifier.height(4.dp))
-
-            Text(
-                text = "Local Deterministic System Engine & AI Assistant",
-                style = MaterialTheme.typography.bodySmall.copy(
-                    color = RexyyTextSecondary,
-                    fontWeight = FontWeight.Medium
-                ),
-                textAlign = TextAlign.Center
-            )
-
-            Spacer(modifier = Modifier.height(16.dp))
-
-            // Primary Activation CTA
-            Button(
-                onClick = onActivateClick,
-                colors = ButtonDefaults.buttonColors(
-                    containerColor = RexyyCyanPrimary,
-                    contentColor = Color.Black
-                ),
-                shape = RoundedCornerShape(14.dp),
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(48.dp)
-                    .testTag("activate_rexyy_primary_button")
-            ) {
-                Icon(imageVector = Icons.Filled.Bolt, contentDescription = null, modifier = Modifier.size(18.dp))
-                Spacer(modifier = Modifier.width(6.dp))
+                Spacer(modifier = Modifier.width(4.dp))
                 Text(
-                    text = "ACTIVATE REXYY",
-                    style = MaterialTheme.typography.titleSmall.copy(
-                        fontWeight = FontWeight.Black,
-                        letterSpacing = 1.2.sp
+                    text = title,
+                    style = MaterialTheme.typography.labelSmall.copy(
+                        color = RexyyTextMuted,
+                        fontSize = 9.sp,
+                        fontWeight = FontWeight.Bold,
+                        letterSpacing = 1.sp
                     )
                 )
             }
-
-            Spacer(modifier = Modifier.height(8.dp))
-
-            TextButton(onClick = onLearnMoreClick) {
-                Icon(imageVector = Icons.Outlined.Info, contentDescription = null, tint = RexyyCyanLight, modifier = Modifier.size(14.dp))
-                Spacer(modifier = Modifier.width(4.dp))
-                Text("What is REXYY & Privacy Policy", color = RexyyCyanLight, style = MaterialTheme.typography.labelSmall)
-            }
+            Spacer(modifier = Modifier.height(4.dp))
+            Text(
+                text = value,
+                style = MaterialTheme.typography.bodyMedium.copy(
+                    fontWeight = FontWeight.Bold,
+                    color = RexyyTextPrimary,
+                    fontSize = 13.sp
+                ),
+                maxLines = 1
+            )
+            Text(
+                text = sub,
+                style = MaterialTheme.typography.labelSmall.copy(
+                    color = accent,
+                    fontSize = 9.sp
+                ),
+                maxLines = 1
+            )
         }
     }
 }
@@ -1427,7 +1124,7 @@ private fun CapabilityVerificationDialog(
                 onClick = onActivateConfirmed,
                 colors = ButtonDefaults.buttonColors(containerColor = RexyyCyanPrimary)
             ) {
-                Text("Complete & Arm REXYY", color = Color.Black, fontWeight = FontWeight.Bold)
+                Text("Arm & Activate REXXY", color = Color.Black, fontWeight = FontWeight.Bold)
             }
         },
         dismissButton = {
@@ -1460,17 +1157,6 @@ private fun CinematicActivationOverlay(
         onFinished()
     }
 
-    val infiniteTransition = rememberInfiniteTransition(label = "rings")
-    val rotation by infiniteTransition.animateFloat(
-        initialValue = 0f,
-        targetValue = 360f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(4000, easing = LinearEasing),
-            repeatMode = RepeatMode.Restart
-        ),
-        label = "rotation"
-    )
-
     Box(
         modifier = Modifier
             .fillMaxSize()
@@ -1482,7 +1168,6 @@ private fun CinematicActivationOverlay(
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.Center
         ) {
-            // Rotating Holographic Rings
             Box(
                 modifier = Modifier.size(220.dp),
                 contentAlignment = Alignment.Center
@@ -1510,18 +1195,16 @@ private fun CinematicActivationOverlay(
             Spacer(modifier = Modifier.height(28.dp))
 
             Text(
-                text = "INITIALIZING REXYY...",
+                text = "INITIALIZING REXXY...",
                 style = MaterialTheme.typography.titleLarge.copy(
                     fontWeight = FontWeight.Black,
                     letterSpacing = 2.sp,
-                    color = RexyyCyanPrimary,
-                    fontFamily = FontFamily.Monospace
+                    color = RexyyCyanPrimary
                 )
             )
 
             Spacer(modifier = Modifier.height(16.dp))
 
-            // Stepped Terminal Log Sequence
             Column(
                 modifier = Modifier
                     .fillMaxWidth(0.85f)
@@ -1535,7 +1218,7 @@ private fun CinematicActivationOverlay(
                 TerminalLogLine(">> [LOCAL_BUS] DETERMINISTIC ROUTER ENGAGED", active = step >= 1)
                 TerminalLogLine(">> [AUDIO_SYNTH] TTS ENGINE PRIMED", active = step >= 2)
                 TerminalLogLine(">> [SECURITY] ALL LOCAL GATES ARMED", active = step >= 3)
-                TerminalLogLine(">> [ONLINE] REXYY ACTIVATED.", active = step >= 4, color = RexyyNeonGreen)
+                TerminalLogLine(">> [ONLINE] REXXY ACTIVATED.", active = step >= 4, color = RexyyNeonGreen)
             }
 
             Spacer(modifier = Modifier.height(24.dp))
@@ -1546,7 +1229,7 @@ private fun CinematicActivationOverlay(
                 shape = RoundedCornerShape(12.dp),
                 modifier = Modifier.height(48.dp)
             ) {
-                Text("ENTER COMMAND CENTER", color = Color.Black, fontWeight = FontWeight.Bold)
+                Text("ENTER COMMAND DASHBOARD", color = Color.Black, fontWeight = FontWeight.Bold)
             }
         }
     }
@@ -1556,7 +1239,8 @@ private fun CinematicActivationOverlay(
 private fun TerminalLogLine(text: String, active: Boolean, color: Color = RexyyCyanLight) {
     AnimatedVisibility(
         visible = active,
-        enter = fadeIn()
+        enter = fadeIn(),
+        exit = fadeOut()
     ) {
         Text(
             text = text,
@@ -1569,165 +1253,3 @@ private fun TerminalLogLine(text: String, active: Boolean, color: Color = RexyyC
         )
     }
 }
-
-// ==========================================
-// SYSTEM HELPER FUNCTIONS & COMPOSABLES
-// ==========================================
-private fun toggleTorchDirect(context: Context) {
-    try {
-        val cameraManager = context.getSystemService(Context.CAMERA_SERVICE) as? CameraManager
-        val cameraId = cameraManager?.cameraIdList?.firstOrNull()
-        if (cameraManager != null && cameraId != null) {
-            // Note: toggles flashlight via hardware camera manager
-            cameraManager.setTorchMode(cameraId, true)
-        }
-    } catch (_: Exception) {}
-}
-
-@Composable
-private fun SearchTargetPill(
-    label: String,
-    target: String,
-    currentTarget: String,
-    onSelect: (String) -> Unit
-) {
-    val isSelected = target == currentTarget
-    Box(
-        modifier = Modifier
-            .clip(RoundedCornerShape(8.dp))
-            .background(if (isSelected) RexyyCyanPrimary else RexyyDarkSurfaceVariant)
-            .clickable { onSelect(target) }
-            .padding(horizontal = 8.dp, vertical = 5.dp)
-    ) {
-        Text(
-            text = label,
-            style = MaterialTheme.typography.labelSmall.copy(
-                fontWeight = FontWeight.Bold,
-                color = if (isSelected) Color.Black else RexyyTextSecondary,
-                fontSize = 10.sp
-            )
-        )
-    }
-}
-
-@Composable
-private fun HudPill(
-    label: String,
-    color: Color,
-    onClick: (() -> Unit)? = null,
-    modifier: Modifier = Modifier
-) {
-    Box(
-        modifier = modifier
-            .clip(RoundedCornerShape(10.dp))
-            .background(RexyyDarkSurface)
-            .border(1.dp, color.copy(alpha = 0.5f), RoundedCornerShape(10.dp))
-            .then(if (onClick != null) Modifier.clickable { onClick() } else Modifier)
-            .padding(vertical = 5.dp, horizontal = 6.dp),
-        contentAlignment = Alignment.Center
-    ) {
-        Text(
-            text = label,
-            style = MaterialTheme.typography.labelSmall.copy(
-                fontWeight = FontWeight.Bold,
-                color = color,
-                fontSize = 10.sp,
-                fontFamily = FontFamily.Monospace
-            ),
-            maxLines = 1
-        )
-    }
-}
-
-@Composable
-private fun TelemetryMiniCard(
-    icon: ImageVector,
-    title: String,
-    value: String,
-    sub: String,
-    accent: Color,
-    modifier: Modifier = Modifier
-) {
-    Card(
-        shape = RoundedCornerShape(12.dp),
-        colors = CardDefaults.cardColors(containerColor = RexyyDarkSurface),
-        border = BorderStroke(1.dp, RexyyDarkBorder),
-        modifier = modifier
-    ) {
-        Column(modifier = Modifier.padding(8.dp)) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Icon(
-                    imageVector = icon,
-                    contentDescription = null,
-                    tint = accent,
-                    modifier = Modifier.size(12.dp)
-                )
-                Spacer(modifier = Modifier.width(4.dp))
-                Text(
-                    text = title,
-                    style = MaterialTheme.typography.labelSmall.copy(
-                        color = RexyyTextMuted,
-                        fontSize = 9.sp,
-                        fontWeight = FontWeight.Bold
-                    )
-                )
-            }
-            Spacer(modifier = Modifier.height(2.dp))
-            Text(
-                text = value,
-                style = MaterialTheme.typography.bodyMedium.copy(
-                    fontWeight = FontWeight.Bold,
-                    color = RexyyTextPrimary,
-                    fontSize = 12.sp
-                ),
-                maxLines = 1
-            )
-            Text(
-                text = sub,
-                style = MaterialTheme.typography.labelSmall.copy(
-                    color = accent,
-                    fontSize = 9.sp
-                ),
-                maxLines = 1
-            )
-        }
-    }
-}
-
-@Composable
-private fun SystemUtilityChip(
-    icon: ImageVector,
-    label: String,
-    onClick: () -> Unit
-) {
-    Card(
-        shape = RoundedCornerShape(12.dp),
-        colors = CardDefaults.cardColors(containerColor = RexyyDarkSurface),
-        border = BorderStroke(1.dp, RexyyDarkBorder),
-        modifier = Modifier.clickable { onClick() }
-    ) {
-        Row(
-            modifier = Modifier.padding(horizontal = 10.dp, vertical = 7.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Icon(
-                imageVector = icon,
-                contentDescription = null,
-                tint = RexyyCyanLight,
-                modifier = Modifier.size(14.dp)
-            )
-            Spacer(modifier = Modifier.width(6.dp))
-            Text(
-                text = label,
-                style = MaterialTheme.typography.labelSmall.copy(
-                    fontWeight = FontWeight.SemiBold,
-                    color = RexyyTextPrimary,
-                    fontSize = 11.sp
-                )
-            )
-        }
-    }
-}
-
-private val Icons.Outlined.StorageIcon: ImageVector
-    get() = Icons.Outlined.Memory

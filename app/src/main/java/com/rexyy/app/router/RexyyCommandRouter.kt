@@ -16,9 +16,8 @@ object RexyyCommandRouter {
         val trimmed = input.trim()
         if (trimmed.isBlank()) return VoiceCommand.AiChat("")
 
-        val lower = trimmed.lowercase()
-
         // 1. Explicit AI Provider overrides (e.g., "Ask Gemini what is quantum physics")
+        val lower = trimmed.lowercase()
         if (lower.startsWith("ask gemini ") || lower.startsWith("gemini se pucho ")) {
             val query = trimmed.replace("(?i)^ask gemini\\s+(to\\s+)?".toRegex(), "")
                 .replace("(?i)^gemini se pucho\\s+".toRegex(), "")
@@ -39,8 +38,14 @@ object RexyyCommandRouter {
             return VoiceCommand.AiChat(prompt = query.ifBlank { trimmed }, providerOverride = AiProviderType.OPENROUTER)
         }
 
-        // 2. Check for multi-step task conjunctions ("and", "aur", "then", "phir")
-        val plannedTask = TaskPlanner.planTask(trimmed) { singleQuery -> routeSingleAction(singleQuery) }
+        // 2. Check for universal app & web search (including compound patterns like "YouTube kholo aur cricket search karo")
+        val appSearch = parseAppSearchCommand(trimmed, lower)
+        if (appSearch != null) {
+            return appSearch.toVoiceCommand()
+        }
+
+        // 3. Check for multi-step task conjunctions ("and", "aur", "then", "phir")
+        val plannedTask = TaskPlanner.planTask(trimmed) { singleQuery -> routeSingleAction(singleQuery).toVoiceCommand() }
         if (plannedTask != null) {
             return VoiceCommand.MultiStepTask(
                 steps = plannedTask.steps.map { it.command },
@@ -49,144 +54,159 @@ object RexyyCommandRouter {
             )
         }
 
-        // 3. Single action routing
+        // 4. Single action routing via structured LocalIntent
+        val intent = parseToLocalIntent(trimmed)
+        return intent.toVoiceCommand()
+    }
+
+    /**
+     * Parses input into strongly typed LocalIntent with structured entities and intent metadata.
+     */
+    fun parseToLocalIntent(input: String): LocalIntent {
+        val trimmed = input.trim()
+        if (trimmed.isBlank()) return LocalIntent.FallbackToAi(prompt = "", rawCommand = "")
         return routeSingleAction(trimmed)
     }
 
-    private fun routeSingleAction(trimmed: String): VoiceCommand {
-        val lower = trimmed.lowercase()
+    private fun routeSingleAction(rawInput: String): LocalIntent {
+        val trimmed = rawInput.trim().trimEnd('.', '!', '?', ',')
+        val lower = trimmed.lowercase().trim()
 
         // --- 0. Wake Word & Conversational Status ---
         if (isWakeWordCommand(lower)) {
-            return VoiceCommand.WakeWord(rawInput = trimmed)
+            return LocalIntent.WakeWord(rawCommand = trimmed)
         }
         if (isStopCommand(lower)) {
-            return VoiceCommand.Stop(rawInput = trimmed)
+            return LocalIntent.Stop(rawCommand = trimmed)
         }
         if (isRepeatCommand(lower)) {
-            return VoiceCommand.RepeatLast(rawInput = trimmed)
+            return LocalIntent.RepeatLast(rawCommand = trimmed)
         }
         if (isWhatCanYouDoCommand(lower)) {
-            return VoiceCommand.WhatCanYouDo(rawInput = trimmed)
+            return LocalIntent.WhatCanYouDo(rawCommand = trimmed)
         }
         if (isAreYouThereCommand(lower)) {
-            return VoiceCommand.AreYouThere(rawInput = trimmed)
+            return LocalIntent.AreYouThere(rawCommand = trimmed)
         }
 
-        // --- 0.1 Local Device Hardware Queries (Battery, Date, Time, Flashlight) ---
+        // --- 0.1 Close / Exit / Minimize ---
+        val closeIntent = parseCloseCommand(trimmed, lower)
+        if (closeIntent != null) return closeIntent
+
+        // --- 0.2 Local Device Telemetry & Sensors (Battery, Date, Time, Flashlight) ---
         if (isBatteryCommand(lower)) {
-            return VoiceCommand.GetBattery(rawInput = trimmed)
+            return LocalIntent.GetBattery(rawCommand = trimmed)
         }
         if (isDateCommand(lower)) {
-            return VoiceCommand.GetDate(rawInput = trimmed)
+            return LocalIntent.GetDate(rawCommand = trimmed)
         }
         if (isTimeCommand(lower)) {
-            return VoiceCommand.GetTime(rawInput = trimmed)
+            return LocalIntent.GetTime(rawCommand = trimmed)
         }
-        val flashlightCommand = parseFlashlightCommand(trimmed, lower)
-        if (flashlightCommand != null) return flashlightCommand
+        val flashlightIntent = parseFlashlightCommand(trimmed, lower)
+        if (flashlightIntent != null) return flashlightIntent
 
-        // --- 0.2 Universal First-Class App & Web Search ---
-        val appSearchCommand = parseAppSearchCommand(trimmed, lower)
-        if (appSearchCommand != null) return appSearchCommand
+        // --- 0.3 Universal First-Class App & Web Search ---
+        val appSearchIntent = parseAppSearchCommand(trimmed, lower)
+        if (appSearchIntent != null) return appSearchIntent
 
         // --- A. Incoming Call & Telephony Control ---
         if (isWhoIsCallingCommand(lower)) {
-            return VoiceCommand.CheckCaller(rawInput = trimmed)
+            return LocalIntent.CheckCaller(rawCommand = trimmed)
         }
         if (isAnswerCallCommand(lower)) {
-            return VoiceCommand.AnswerCall(rawInput = trimmed)
+            return LocalIntent.AnswerCall(rawCommand = trimmed)
         }
         if (isRejectCallCommand(lower)) {
-            return VoiceCommand.RejectCall(rawInput = trimmed)
+            return LocalIntent.RejectCall(rawCommand = trimmed)
         }
 
         // --- B. Contacts Search Local ---
-        val contactsSearchCommand = parseContactsSearchCommand(trimmed, lower)
-        if (contactsSearchCommand != null) return contactsSearchCommand
+        val contactsSearchIntent = parseContactsSearchCommand(trimmed, lower)
+        if (contactsSearchIntent != null) return contactsSearchIntent
 
         // --- C. Phone Calls ---
-        val callCommand = parseCallCommand(trimmed, lower)
-        if (callCommand != null) return callCommand
+        val callIntent = parseCallCommand(trimmed, lower)
+        if (callIntent != null) return callIntent
 
         // --- D. WhatsApp Actions ---
-        val whatsAppCommand = parseWhatsAppCommand(trimmed, lower)
-        if (whatsAppCommand != null) return whatsAppCommand
+        val whatsAppIntent = parseWhatsAppCommand(trimmed, lower)
+        if (whatsAppIntent != null) return whatsAppIntent
 
         // --- E. Camera & Media ---
         if (isCameraCommand(lower)) {
-            return VoiceCommand.OpenCamera(rawInput = trimmed)
+            return LocalIntent.OpenCamera(rawCommand = trimmed)
         }
 
         // --- F. Audio & Volume ---
-        val volumeCommand = parseVolumeCommand(trimmed, lower)
-        if (volumeCommand != null) return volumeCommand
+        val volumeIntent = parseVolumeCommand(trimmed, lower)
+        if (volumeIntent != null) return volumeIntent
 
         // --- G. Brightness ---
-        val brightnessCommand = parseBrightnessCommand(trimmed, lower)
-        if (brightnessCommand != null) return brightnessCommand
+        val brightnessIntent = parseBrightnessCommand(trimmed, lower)
+        if (brightnessIntent != null) return brightnessIntent
 
         // --- H. System Settings, Wi-Fi & Bluetooth ---
         if (isBluetoothCommand(lower)) {
             val turnOn = !lower.contains("off") && !lower.contains("band")
-            return VoiceCommand.BluetoothSettings(turnOn = turnOn, rawInput = trimmed)
+            return LocalIntent.BluetoothControl(turnOn = turnOn, rawCommand = trimmed)
         }
         if (isWifiCommand(lower)) {
-            return VoiceCommand.WifiSettings(rawInput = trimmed)
+            return LocalIntent.WifiControl(queryState = lower.contains("kya") || lower.contains("status"), rawCommand = trimmed)
         }
-        val settingsCmd = parseSettingsCommand(trimmed, lower)
-        if (settingsCmd != null) return settingsCmd
+        val settingsIntent = parseSettingsCommand(trimmed, lower)
+        if (settingsIntent != null) return settingsIntent
 
         // --- I. Alarms & Timers ---
         if (isCancelAlarmCommand(lower)) {
-            return VoiceCommand.CancelAlarm(rawInput = trimmed)
+            return LocalIntent.CancelAlarm(rawCommand = trimmed)
         }
         if (isCancelTimerCommand(lower)) {
-            return VoiceCommand.CancelTimer(rawInput = trimmed)
+            return LocalIntent.CancelTimer(rawCommand = trimmed)
         }
-        val timerCommand = parseTimerCommand(trimmed, lower)
-        if (timerCommand != null) return timerCommand
+        val timerIntent = parseTimerCommand(trimmed, lower)
+        if (timerIntent != null) return timerIntent
 
-        val alarmCommand = parseAlarmCommand(trimmed, lower)
-        if (alarmCommand != null) return alarmCommand
+        val alarmIntent = parseAlarmCommand(trimmed, lower)
+        if (alarmIntent != null) return alarmIntent
 
         // --- J. Calendar & Contacts App ---
         if (isCalendarCommand(lower)) {
-            return VoiceCommand.OpenCalendar(rawInput = trimmed)
+            return LocalIntent.OpenCalendar(rawCommand = trimmed)
         }
         if (isContactsCommand(lower)) {
-            return VoiceCommand.OpenContacts(rawInput = trimmed)
+            return LocalIntent.OpenContacts(rawCommand = trimmed)
         }
 
-        // --- K. Device Info ---
+        // --- K. Device Info / Status ---
         if (isDeviceInfoCommand(lower)) {
-            return VoiceCommand.GetDeviceInfo(rawInput = trimmed)
+            return LocalIntent.GetDeviceStatus(rawCommand = trimmed)
         }
 
         // --- L. SMS Messaging ---
-        val smsCommand = parseSmsCommand(trimmed, lower)
-        if (smsCommand != null) return smsCommand
+        val smsIntent = parseSmsCommand(trimmed, lower)
+        if (smsIntent != null) return smsIntent
 
         // --- M. Open App (Dynamic Installed Apps Matching & Aliases) ---
-        val openAppCommand = parseOpenAppCommand(trimmed, lower)
-        if (openAppCommand != null) return openAppCommand
+        val openAppIntent = parseOpenAppCommand(trimmed, lower)
+        if (openAppIntent != null) return openAppIntent
 
-        // --- N. Web Search ---
-        val searchCommand = parseSearchCommand(trimmed, lower)
-        if (searchCommand != null) return searchCommand
+        // --- N. Accessibility System Actions ---
+        val accessIntent = parseAccessibilityAction(trimmed, lower)
+        if (accessIntent != null) return accessIntent
 
-        // --- O. Reminders ---
+        // --- O. Web Search ---
+        val searchIntent = parseSearchCommand(trimmed, lower)
+        if (searchIntent != null) return searchIntent
+
+        // --- P. Reminders ---
         if (isReminderCommand(lower)) {
             val title = extractReminderTitle(trimmed, lower)
-            return VoiceCommand.SetReminder(title = title, rawInput = trimmed)
+            return LocalIntent.SetReminder(title = title, rawCommand = trimmed)
         }
 
-        // --- P. Accessibility System Actions ---
-        val accessCmd = parseAccessibilityAction(trimmed, lower)
-        if (accessCmd != null) return accessCmd
-
         // Default: Forward to Generative AI model
-        return VoiceCommand.AiChat(prompt = trimmed)
+        return LocalIntent.FallbackToAi(prompt = trimmed, rawCommand = trimmed)
     }
 
     private fun isWakeWordCommand(lower: String): Boolean {
@@ -204,90 +224,144 @@ object RexyyCommandRouter {
                 lower == "roko" || lower == "stop listening" || lower == "stop speaking"
     }
 
+    private fun parseCloseCommand(raw: String, lower: String): LocalIntent.CloseApp? {
+        val closePhrases = listOf(
+            "exit", "close", "minimize",
+            "background me jao", "background mein jao", "go to background",
+            "background me chale jao", "background mein chale jao", "send to background",
+            "minimize karo", "minimize app", "close app", "app band karo",
+            "band karo", "chale jao", "hide", "back jao",
+            "go home", "home screen jao", "home jao", "home par jao", "go to home"
+        )
+        if (lower in closePhrases) {
+            val target = if (lower.contains("home")) "home" else if (lower.contains("exit")) "exit" else "background"
+            return LocalIntent.CloseApp(target = target, rawCommand = raw)
+        }
+        return null
+    }
+
     private fun isBatteryCommand(lower: String): Boolean {
+        // Exclude explicit settings triggers like "battery settings"
+        if (lower.contains("battery setting") || lower.contains("battery saver setting")) return false
+
         return lower.contains("battery") || lower.contains("charge kitna") ||
-                lower.contains("charging kitni") || lower.contains("battery kitni")
+                lower.contains("charging") || lower.contains("battery kitni") ||
+                lower.contains("battery status") || lower.contains("battery level") ||
+                lower.contains("battery percentage")
     }
 
     private fun isDateCommand(lower: String): Boolean {
         return lower.contains("date kya") || lower.contains("tarikh kya") || lower.contains("tareekh kya") ||
                 lower.contains("what is the date") || lower.contains("what date is it") || lower.contains("today's date") ||
-                lower == "date" || lower == "tarikh" || lower == "aaj ki date" || lower == "today date"
+                lower == "date" || lower == "tarikh" || lower == "aaj ki date" || lower == "today date" ||
+                lower.contains("aaj ki date") || lower.contains("aaj konsi tarikh") || lower.contains("aaj konsi date")
     }
 
     private fun isTimeCommand(lower: String): Boolean {
         return lower.contains("time kya") || lower.contains("samay kya") || lower.contains("kitne baje") ||
                 lower.contains("what is the time") || lower.contains("what time is it") || lower.contains("current time") ||
-                lower == "time" || lower == "samay"
+                lower == "time" || lower == "samay" || lower.contains("kya time ho raha") || lower.contains("time batao")
     }
 
-    private fun parseFlashlightCommand(raw: String, lower: String): VoiceCommand.ToggleFlashlight? {
+    private fun parseFlashlightCommand(raw: String, lower: String): LocalIntent.ToggleFlashlight? {
         if (lower.contains("torch") || lower.contains("flashlight") || lower.contains("flash light")) {
             val turnOff = lower.contains("off") || lower.contains("band") || lower.contains("bujhao")
-            return VoiceCommand.ToggleFlashlight(turnOn = !turnOff, rawInput = raw)
+            return LocalIntent.ToggleFlashlight(turnOn = !turnOff, rawCommand = raw)
         }
         return null
     }
 
-    private fun parseAppSearchCommand(raw: String, lower: String): VoiceCommand.AppSearch? {
-        // 1. "YouTube pe cricket search karo" / "YouTube par cricket search karo" / "YouTube mein cricket dhundho"
-        val appPrefixHinglish = Regex("(?i)^(youtube|chrome|maps|spotify|play\\s*store|google)\\s+(pe|par|mein)\\s+(.+?)\\s+(search\\s+karo|search|dhundho|play karo|dekho)$").find(raw)
+    private fun parseAppSearchCommand(raw: String, lower: String): LocalIntent.AppSearch? {
+        // 1. "YouTube pe cricket search karo" / "Chrome me REXYY search karo" / "Maps me Bangalore airport search karo" / "Spotify pe Arijit Singh search karo"
+        val appPrefixHinglish = Regex("(?i)^(youtube\\s+music|yt\\s+music|youtube|yt|chrome|google\\s*chrome|browser|google\\s*maps|maps|spotify|instagram|insta|play\\s*store|google\\s*play|playstore|google)\\s+(pe|par|me|mein|main|par\\s+bhi)\\s+(.+?)\\s+(search\\s+karo|search\\s+kar\\s+do|search|dhundho|dhundo|play\\s+karo|dekho)$").find(raw)
         if (appPrefixHinglish != null) {
             val app = normalizeSearchApp(appPrefixHinglish.groupValues[1])
-            val q = appPrefixHinglish.groupValues[3].trim()
-            return VoiceCommand.AppSearch(targetApp = app, query = q, rawInput = raw)
+            val q = cleanSearchQuery(appPrefixHinglish.groupValues[3])
+            if (q.isNotBlank()) {
+                return LocalIntent.AppSearch(targetApp = app, query = q, rawCommand = raw)
+            }
         }
 
-        // 2. "Search cricket on YouTube" / "Search for cricket in YouTube"
-        val searchOnApp = Regex("(?i)^search\\s+(for\\s+)?(.+?)\\s+(on|in|using)\\s+(youtube|chrome|maps|spotify|play\\s*store|google)$").find(raw)
+        // 2. "Search cricket on YouTube" / "Search for cricket in YouTube" / "Search Bangalore airport on Maps"
+        val searchOnApp = Regex("(?i)^search\\s+(for\\s+)?(.+?)\\s+(on|in|using)\\s+(youtube\\s+music|yt\\s+music|youtube|yt|chrome|google\\s*chrome|browser|google\\s*maps|maps|spotify|instagram|insta|play\\s*store|google\\s*play|playstore|google)$").find(raw)
         if (searchOnApp != null) {
-            val q = searchOnApp.groupValues[2].trim()
+            val q = cleanSearchQuery(searchOnApp.groupValues[2])
             val app = normalizeSearchApp(searchOnApp.groupValues[4])
-            return VoiceCommand.AppSearch(targetApp = app, query = q, rawInput = raw)
+            if (q.isNotBlank()) {
+                return LocalIntent.AppSearch(targetApp = app, query = q, rawCommand = raw)
+            }
         }
 
-        // 3. "X kholo aur Y search karo" (e.g. "YouTube kholo aur cricket search karo")
-        val openAndSearch = Regex("(?i)^(.+?)\\s+(kholo|open karo)\\s+(aur|and)\\s+(.+?)\\s+(search karo|search|dhundho)$").find(raw)
+        // 3. "X kholo aur Y search karo" / "X open karo and search Y" (e.g. "YouTube kholo aur cricket search karo")
+        val openAndSearch = Regex("(?i)^(.+?)\\s+(kholo|open karo|open|chalao|start karo)\\s+(aur|and|phir|then)\\s+(.+?)\\s+(search\\s+karo|search\\s+kar\\s+do|search|dhundho|dhundo)$").find(raw)
         if (openAndSearch != null) {
             val app = normalizeSearchApp(openAndSearch.groupValues[1])
-            val q = openAndSearch.groupValues[4].trim()
-            return VoiceCommand.AppSearch(targetApp = app, query = q, rawInput = raw)
+            val q = cleanSearchQuery(openAndSearch.groupValues[4])
+            if (q.isNotBlank()) {
+                return LocalIntent.AppSearch(targetApp = app, query = q, rawCommand = raw)
+            }
         }
 
         // 4. "Y ko X par dhundho" (e.g. "cricket ko YouTube par dhundho")
-        val queryOnApp = Regex("(?i)^(.+?)\\s+ko\\s+(youtube|chrome|maps|spotify|play\\s*store|google)\\s+(par|pe|mein)\\s+(dhundho|search karo)$").find(raw)
+        val queryOnApp = Regex("(?i)^(.+?)\\s+ko\\s+(youtube\\s+music|yt\\s+music|youtube|yt|chrome|maps|google\\s*maps|spotify|instagram|play\\s*store|google)\\s+(par|pe|me|mein|main)\\s+(dhundho|dhundo|search\\s+karo|search)$").find(raw)
         if (queryOnApp != null) {
-            val q = queryOnApp.groupValues[1].trim()
+            val q = cleanSearchQuery(queryOnApp.groupValues[1])
             val app = normalizeSearchApp(queryOnApp.groupValues[2])
-            return VoiceCommand.AppSearch(targetApp = app, query = q, rawInput = raw)
-        }
-
-        // 5. "Y ke videos search karo" (e.g. "cricket ke videos search karo")
-        val videoSearch = Regex("(?i)^(.+?)\\s+ke\\s+videos?\\s+(search karo|search|dhundho|dikhao)$").find(raw)
-        if (videoSearch != null) {
-            val q = videoSearch.groupValues[1].trim()
-            return VoiceCommand.AppSearch(targetApp = "youtube", query = q, searchType = "video", rawInput = raw)
-        }
-
-        // 6. "Search karo REXYY kya hai" / "Google karo X"
-        if (lower.startsWith("search karo ") || lower.startsWith("google karo ")) {
-            val q = raw.substring(12).trim()
             if (q.isNotBlank()) {
-                return VoiceCommand.AppSearch(targetApp = "web", query = q, rawInput = raw)
+                return LocalIntent.AppSearch(targetApp = app, query = q, rawCommand = raw)
+            }
+        }
+
+        // 6. "Y search karo X pe" (e.g. "cricket search karo YouTube pe")
+        val querySearchOnApp = Regex("(?i)^(.+?)\\s+(search\\s+karo|dhundho|dhundo)\\s+(youtube\\s+music|yt\\s+music|youtube|yt|chrome|maps|google\\s*maps|spotify|instagram|play\\s*store)\\s+(pe|par|me|mein|main)$").find(raw)
+        if (querySearchOnApp != null) {
+            val q = cleanSearchQuery(querySearchOnApp.groupValues[1])
+            val app = normalizeSearchApp(querySearchOnApp.groupValues[3])
+            if (q.isNotBlank()) {
+                return LocalIntent.AppSearch(targetApp = app, query = q, rawCommand = raw)
+            }
+        }
+
+        // 7. "Y ke videos search karo" (e.g. "cricket ke videos search karo")
+        val videoSearch = Regex("(?i)^(.+?)\\s+ke\\s+videos?\\s+(search\\s+karo|search|dhundho|dikhao)$").find(raw)
+        if (videoSearch != null) {
+            val q = cleanSearchQuery(videoSearch.groupValues[1])
+            if (q.isNotBlank()) {
+                return LocalIntent.AppSearch(targetApp = "youtube", query = q, searchType = "video", rawCommand = raw)
+            }
+        }
+
+        // 8. "Search karo REXYY kya hai" / "Google karo X"
+        if (lower.startsWith("search karo ") || lower.startsWith("google karo ")) {
+            val q = cleanSearchQuery(raw.substring(12))
+            if (q.isNotBlank()) {
+                return LocalIntent.AppSearch(targetApp = "web", query = q, rawCommand = raw)
             }
         }
 
         return null
     }
 
+    private fun cleanSearchQuery(query: String): String {
+        return query.trim()
+            .removeSurrounding("\"")
+            .removeSurrounding("'")
+            .replace(Regex("(?i)^(for|about)\\s+"), "")
+            .replace(Regex("(?i)\\s+(ko|ke|ka|ki)$"), "")
+            .trim()
+    }
+
     private fun normalizeSearchApp(app: String): String {
         val l = app.lowercase().trim()
         return when {
+            l.contains("youtube music") || l.contains("yt music") || l == "ytmusic" -> "youtube music"
             l.contains("youtube") || l == "yt" -> "youtube"
             l.contains("chrome") || l.contains("browser") -> "chrome"
             l.contains("map") -> "maps"
-            l.contains("spotify") || l.contains("music") -> "spotify"
+            l.contains("spotify") -> "spotify"
+            l.contains("instagram") || l.contains("insta") -> "instagram"
             l.contains("play") || l.contains("store") -> "playstore"
+            l == "google" -> "web"
             else -> l
         }
     }
@@ -324,22 +398,22 @@ object RexyyCommandRouter {
                 )
     }
 
-    private fun parseContactsSearchCommand(raw: String, lower: String): VoiceCommand.FindContact? {
+    private fun parseContactsSearchCommand(raw: String, lower: String): LocalIntent.FindContact? {
         val findMatcher = Regex("(?i)^(find|search|lookup)\\s+(.+?)\\s+in\\s+(my\\s+)?contacts$").find(raw)
         if (findMatcher != null) {
             val name = cleanTargetName(findMatcher.groupValues[2])
-            return VoiceCommand.FindContact(contactName = name, rawInput = raw)
+            return LocalIntent.FindContact(contactName = name, rawCommand = raw)
         }
 
         val hindiMatcher = Regex("(?i)^(.+?)\\s+(ka|ki)?\\s*(contact|number|phone)\\s+(dhundo|search karo|batao)$").find(raw)
         if (hindiMatcher != null) {
             val name = cleanTargetName(hindiMatcher.groupValues[1])
-            return VoiceCommand.FindContact(contactName = name, rawInput = raw)
+            return LocalIntent.FindContact(contactName = name, rawCommand = raw)
         }
 
         if (lower.startsWith("find contact ") || lower.startsWith("search contact ")) {
             val name = cleanTargetName(raw.substring(13))
-            return VoiceCommand.FindContact(contactName = name, rawInput = raw)
+            return LocalIntent.FindContact(contactName = name, rawCommand = raw)
         }
 
         return null
@@ -386,7 +460,7 @@ object RexyyCommandRouter {
                 lower.contains("decline call")
     }
 
-    private fun parseCallCommand(raw: String, lower: String): VoiceCommand.CallContact? {
+    private fun parseCallCommand(raw: String, lower: String): LocalIntent.CallContact? {
         val isCallTrigger = lower.startsWith("call ") ||
                 lower.startsWith("phone ") ||
                 lower.startsWith("dial ") ||
@@ -414,18 +488,18 @@ object RexyyCommandRouter {
             return null
         }
 
-        return VoiceCommand.CallContact(target = target, confirmedDirectCall = false, rawInput = raw)
+        return LocalIntent.CallContact(target = target, rawCommand = raw)
     }
 
-    private fun parseWhatsAppCommand(raw: String, lower: String): VoiceCommand? {
+    private fun parseWhatsAppCommand(raw: String, lower: String): LocalIntent? {
         if (!lower.contains("whatsapp") && !lower.contains("whats app")) return null
 
         // "Open WhatsApp" / "WhatsApp kholo"
         if (lower == "open whatsapp" || lower == "whatsapp kholo" || lower == "whatsapp open karo" ||
             lower == "open whats app" || lower == "whats app kholo" || lower == "whatsapp chalao" ||
-            lower == "whatsapp"
+            lower == "whatsapp" || lower == "whatsapp open kar do" || lower == "whatsapp khol do"
         ) {
-            return VoiceCommand.OpenWhatsApp(rawInput = raw)
+            return LocalIntent.OpenWhatsApp(rawCommand = raw)
         }
 
         // Colon syntax: "Send WhatsApp to Ramzan: Hello there" or "Ramzan ko whatsapp message bhejo: Kal milte hain"
@@ -434,7 +508,7 @@ object RexyyCommandRouter {
             val header = colonSplit[0].trim()
             val body = colonSplit.subList(1, colonSplit.size).joinToString(":").trim()
             val target = cleanTargetName(extractWhatsAppTarget(header))
-            return VoiceCommand.WhatsAppMessage(target = target, body = body, rawInput = raw)
+            return LocalIntent.WhatsAppMessage(target = target, body = body, rawCommand = raw)
         }
 
         // "Ramzan ko WhatsApp pe bol kal milte hain" / "Rahul ko whatsapp par bolo main late ho jaunga"
@@ -443,7 +517,7 @@ object RexyyCommandRouter {
         if (boloMatch != null) {
             val target = cleanTargetName(boloMatch.groupValues[1])
             val message = boloMatch.groupValues[4].trim()
-            return VoiceCommand.WhatsAppMessage(target = target, body = message, rawInput = raw)
+            return LocalIntent.WhatsAppMessage(target = target, body = message, rawCommand = raw)
         }
 
         // "send WhatsApp message on Ramzan" / "send whatsapp message to Ramzan" / "send whatsapp to Ramzan"
@@ -451,7 +525,7 @@ object RexyyCommandRouter {
         if (sendToMatch != null) {
             val target = cleanTargetName(sendToMatch.groupValues[4])
             if (target.isNotBlank()) {
-                return VoiceCommand.WhatsAppMessage(target = target, body = "", rawInput = raw)
+                return LocalIntent.WhatsAppMessage(target = target, body = "", rawCommand = raw)
             }
         }
 
@@ -460,7 +534,7 @@ object RexyyCommandRouter {
         if (hindiSendMatch != null) {
             val target = cleanTargetName(hindiSendMatch.groupValues[1])
             if (target.isNotBlank()) {
-                return VoiceCommand.WhatsAppMessage(target = target, body = "", rawInput = raw)
+                return LocalIntent.WhatsAppMessage(target = target, body = "", rawCommand = raw)
             }
         }
 
@@ -468,10 +542,10 @@ object RexyyCommandRouter {
         val chatMatch = Regex("(?i)^(.+?)\\s+(ka|ki)?\\s*whatsapp\\s+chat\\s+(kholo|open karo)$").find(raw)
         if (chatMatch != null) {
             val target = cleanTargetName(chatMatch.groupValues[1])
-            return VoiceCommand.WhatsAppChat(target = target, rawInput = raw)
+            return LocalIntent.WhatsAppChat(target = target, rawCommand = raw)
         }
 
-        return VoiceCommand.OpenWhatsApp(rawInput = raw)
+        return LocalIntent.OpenWhatsApp(rawCommand = raw)
     }
 
     private fun extractWhatsAppTarget(header: String): String {
@@ -484,62 +558,81 @@ object RexyyCommandRouter {
         return lower.contains("camera kholo") ||
                 lower.contains("camera open karo") ||
                 lower.contains("open camera") ||
+                lower.contains("camera chalao") ||
+                lower.contains("camera chala do") ||
                 lower.contains("photo khicho") ||
                 lower.contains("take photo") ||
                 lower.contains("take a picture") ||
                 lower == "camera"
     }
 
-    private fun parseVolumeCommand(raw: String, lower: String): VoiceCommand.AdjustVolume? {
+    private fun parseVolumeCommand(raw: String, lower: String): LocalIntent.AdjustVolume? {
+        if (lower == "mute" || lower == "silent" || lower.contains("unmute")) {
+            return LocalIntent.AdjustVolume(mute = (lower != "unmute"), rawCommand = raw)
+        }
+
         if (!lower.contains("volume") && !lower.contains("awaaz") && !lower.contains("awaz") && !lower.contains("sound")) {
             return null
         }
 
-        if (lower.contains("mute") || lower.contains("awaaz band") || lower.contains("silent")) {
-            return VoiceCommand.AdjustVolume(mute = true, rawInput = raw)
+        if (lower.contains("mute") || lower.contains("awaaz band") || lower.contains("silent") || lower == "mute") {
+            return LocalIntent.AdjustVolume(mute = true, rawCommand = raw)
         }
 
-        // Percentage check: "set volume to 50%" or "volume 50 percent karo"
+        // Percentage check: "set volume to 50%" or "volume 50 percent karo" or "volume 80% karo"
         val percentMatcher = Pattern.compile("(\\d{1,3})\\s*(%|percent)").matcher(lower)
         if (percentMatcher.find()) {
             val p = percentMatcher.group(1)?.toIntOrNull()
             if (p != null) {
-                return VoiceCommand.AdjustVolume(percent = p.coerceIn(0, 100), rawInput = raw)
+                return LocalIntent.AdjustVolume(percent = p.coerceIn(0, 100), rawCommand = raw)
             }
         }
 
         val isIncrease = lower.contains("increase") || lower.contains("up") ||
                 lower.contains("raise") || lower.contains("badhao") ||
-                lower.contains("jyada") || lower.contains("high")
+                lower.contains("jyada") || lower.contains("high") ||
+                lower.contains("tez")
         val isDecrease = lower.contains("decrease") || lower.contains("down") ||
                 lower.contains("lower") || lower.contains("kam") ||
-                lower.contains("ghatao") || lower.contains("low")
+                lower.contains("ghatao") || lower.contains("low") ||
+                lower.contains("dheemi")
 
         return when {
-            isIncrease -> VoiceCommand.AdjustVolume(raise = true, rawInput = raw)
-            isDecrease -> VoiceCommand.AdjustVolume(raise = false, rawInput = raw)
-            else -> VoiceCommand.AdjustVolume(raise = true, rawInput = raw)
+            isIncrease -> LocalIntent.AdjustVolume(raise = true, rawCommand = raw)
+            isDecrease -> LocalIntent.AdjustVolume(raise = false, rawCommand = raw)
+            else -> LocalIntent.AdjustVolume(raise = true, rawCommand = raw)
         }
     }
 
-    private fun parseBrightnessCommand(raw: String, lower: String): VoiceCommand.AdjustBrightness? {
+    private fun parseBrightnessCommand(raw: String, lower: String): LocalIntent.SetBrightness? {
         if (!lower.contains("brightness") && !lower.contains("roshni")) return null
 
-        val percentMatcher = Pattern.compile("(\\d{1,3})\\s*(%|percent)").matcher(lower)
+        // Percentage check: "brightness 50 percent karo", "brightness 50% karo", "brightness 80 karo"
+        val percentMatcher = Pattern.compile("(\\d{1,3})\\s*(%|percent)?").matcher(lower)
         if (percentMatcher.find()) {
             val p = percentMatcher.group(1)?.toIntOrNull()
-            if (p != null) {
-                return VoiceCommand.AdjustBrightness(percent = p.coerceIn(0, 100), rawInput = raw)
+            if (p != null && (p in 0..100)) {
+                return LocalIntent.SetBrightness(percent = p, rawCommand = raw)
             }
         }
 
-        val isIncrease = lower.contains("increase") || lower.contains("up") || lower.contains("badhao")
-        val isDecrease = lower.contains("decrease") || lower.contains("down") || lower.contains("kam")
+        if (lower.contains("full") || lower.contains("100%")) {
+            return LocalIntent.SetBrightness(percent = 100, rawCommand = raw)
+        }
+        if (lower.contains("zero") || lower.contains("minimum") || lower.contains("sabse kam")) {
+            return LocalIntent.SetBrightness(percent = 10, rawCommand = raw)
+        }
+        if (lower.contains("aadhi") || lower.contains("half") || lower.contains("medium")) {
+            return LocalIntent.SetBrightness(percent = 50, rawCommand = raw)
+        }
+
+        val isIncrease = lower.contains("increase") || lower.contains("up") || lower.contains("badhao") || lower.contains("jyada")
+        val isDecrease = lower.contains("decrease") || lower.contains("down") || lower.contains("kam") || lower.contains("ghatao")
 
         return when {
-            isIncrease -> VoiceCommand.AdjustBrightness(raise = true, rawInput = raw)
-            isDecrease -> VoiceCommand.AdjustBrightness(raise = false, rawInput = raw)
-            else -> VoiceCommand.AdjustBrightness(raise = true, rawInput = raw)
+            isIncrease -> LocalIntent.SetBrightness(raise = true, rawCommand = raw)
+            isDecrease -> LocalIntent.SetBrightness(raise = false, rawCommand = raw)
+            else -> LocalIntent.SetBrightness(raise = true, rawCommand = raw)
         }
     }
 
@@ -556,60 +649,110 @@ object RexyyCommandRouter {
         return (lower.contains("wi-fi") || lower.contains("wifi")) && (
                 lower.contains("kholo") || lower.contains("open") ||
                         lower.contains("settings") || lower.contains("on") ||
-                        lower.contains("off")
+                        lower.contains("off") || lower.contains("chalu") ||
+                        lower.contains("band")
                 )
     }
 
-    private fun isSettingsCommand(lower: String): Boolean {
-        return lower == "settings" || lower == "setting" ||
-                lower.contains("settings kholo") || lower.contains("setting kholo") ||
-                lower.contains("open settings") || lower.contains("open setting") ||
-                lower.contains("settings open karo")
+    private fun parseSettingsCommand(raw: String, lower: String): LocalIntent.OpenSettings? {
+        if (lower == "settings" || lower == "setting" || lower == "settings kholo" ||
+            lower == "setting kholo" || lower == "open settings" || lower == "system settings" ||
+            lower == "settings open karo" || lower == "settings open kar do"
+        ) {
+            return LocalIntent.OpenSettings(subSettings = "", rawCommand = raw)
+        }
+        if (lower.contains("display setting") || lower.contains("screen setting")) {
+            return LocalIntent.OpenSettings(subSettings = "display", rawCommand = raw)
+        }
+        if (lower.contains("sound setting") || lower.contains("audio setting") || lower.contains("ringtone setting")) {
+            return LocalIntent.OpenSettings(subSettings = "sound", rawCommand = raw)
+        }
+        if (lower.contains("battery setting") || lower.contains("battery saver setting")) {
+            return LocalIntent.OpenSettings(subSettings = "battery", rawCommand = raw)
+        }
+        if (lower.contains("app setting") || lower.contains("manage apps") || lower.contains("installed apps")) {
+            return LocalIntent.OpenSettings(subSettings = "apps", rawCommand = raw)
+        }
+        if (lower.contains("developer option")) {
+            return LocalIntent.OpenSettings(subSettings = "developer", rawCommand = raw)
+        }
+        if (lower.contains("location setting") || lower.contains("gps setting")) {
+            return LocalIntent.OpenSettings(subSettings = "location", rawCommand = raw)
+        }
+        if (lower.contains("storage setting") || lower.contains("internal storage")) {
+            return LocalIntent.OpenSettings(subSettings = "storage", rawCommand = raw)
+        }
+        if (lower.contains("network setting") || lower.contains("data usage setting")) {
+            return LocalIntent.OpenSettings(subSettings = "network", rawCommand = raw)
+        }
+        if (lower.endsWith(" settings") || lower.startsWith("settings ") || lower.contains("settings kholo") || lower.contains("setting kholo")) {
+            val sub = raw.replace("(?i)(open|settings|setting|kholo|chalao)".toRegex(), "").trim()
+            return LocalIntent.OpenSettings(subSettings = sub, rawCommand = raw)
+        }
+        return null
     }
 
-    private fun parseTimerCommand(raw: String, lower: String): VoiceCommand.SetTimer? {
+    private fun parseTimerCommand(raw: String, lower: String): LocalIntent.SetTimer? {
         if (!lower.contains("timer")) return null
 
         val minMatcher = Pattern.compile("(\\d+)\\s*(minute|min|m)", Pattern.CASE_INSENSITIVE).matcher(lower)
         if (minMatcher.find()) {
             val mins = minMatcher.group(1)?.toIntOrNull() ?: 1
-            return VoiceCommand.SetTimer(seconds = mins * 60, message = "REXYY Timer", rawInput = raw)
+            return LocalIntent.SetTimer(seconds = mins * 60, message = "REXYY Timer", rawCommand = raw)
         }
 
         val secMatcher = Pattern.compile("(\\d+)\\s*(second|sec|s)", Pattern.CASE_INSENSITIVE).matcher(lower)
         if (secMatcher.find()) {
             val secs = secMatcher.group(1)?.toIntOrNull() ?: 30
-            return VoiceCommand.SetTimer(seconds = secs, message = "REXYY Timer", rawInput = raw)
+            return LocalIntent.SetTimer(seconds = secs, message = "REXYY Timer", rawCommand = raw)
         }
 
-        return VoiceCommand.SetTimer(seconds = 300, message = "REXYY Timer", rawInput = raw)
+        return LocalIntent.SetTimer(seconds = 300, message = "REXYY Timer", rawCommand = raw)
     }
 
-    private fun parseAlarmCommand(raw: String, lower: String): VoiceCommand.SetAlarm? {
+    private fun parseAlarmCommand(raw: String, lower: String): LocalIntent.SetAlarm? {
         val isAlarmTrigger = lower.contains("alarm") || lower.contains("wake me up") ||
                 lower.contains("baje uthao") || lower.contains("baje jagao")
         if (!isAlarmTrigger) return null
+
+        // 1. Check for time with minutes like "7:30 am", "7:30 baje", "saadhe 7 baje"
+        if (lower.contains("saadhe") || lower.contains("sadhe")) {
+            val digitMatcher = Pattern.compile("(\\d{1,2})").matcher(lower)
+            if (digitMatcher.find()) {
+                var hour = digitMatcher.group(1)?.toIntOrNull() ?: 7
+                if ((lower.contains("sham") || lower.contains("shaam") || lower.contains("raat") || lower.contains("pm")) && hour < 12) {
+                    hour += 12
+                }
+                return LocalIntent.SetAlarm(hour = hour, minute = 30, message = "REXYY Alarm", rawCommand = raw)
+            }
+        }
 
         val colonMatcher = Pattern.compile("(\\d{1,2}):(\\d{2})\\s*(am|pm)?", Pattern.CASE_INSENSITIVE).matcher(lower)
         if (colonMatcher.find()) {
             var hour = colonMatcher.group(1)?.toIntOrNull() ?: 7
             val min = colonMatcher.group(2)?.toIntOrNull() ?: 0
             val amPm = colonMatcher.group(3)?.lowercase()
-            if (amPm == "pm" && hour < 12) hour += 12
+            if ((amPm == "pm" || lower.contains("sham") || lower.contains("shaam") || lower.contains("raat")) && hour < 12) {
+                hour += 12
+            }
             if (amPm == "am" && hour == 12) hour = 0
-            return VoiceCommand.SetAlarm(hour = hour, minute = min, message = "REXYY Alarm", rawInput = raw)
+            return LocalIntent.SetAlarm(hour = hour, minute = min, message = "REXYY Alarm", rawCommand = raw)
         }
 
+        // 2. Check for hour with "baje", "am", "pm", "o'clock"
+        // e.g. "7 baje alarm laga do", "subah 6 baje ka alarm", "alarm lagao 8 baje"
         val hourMatcher = Pattern.compile("(\\d{1,2})\\s*(am|pm|baje|o'clock)", Pattern.CASE_INSENSITIVE).matcher(lower)
         if (hourMatcher.find()) {
             var hour = hourMatcher.group(1)?.toIntOrNull() ?: 7
             val modifier = hourMatcher.group(2)?.lowercase()
-            if (modifier == "pm" && hour < 12) hour += 12
+            val isPm = modifier == "pm" || lower.contains("sham") || lower.contains("shaam") || lower.contains("raat") || lower.contains("dophar")
+            if (isPm && hour < 12) hour += 12
             if (modifier == "am" && hour == 12) hour = 0
-            return VoiceCommand.SetAlarm(hour = hour, minute = 0, message = "REXYY Alarm", rawInput = raw)
+            return LocalIntent.SetAlarm(hour = hour, minute = 0, message = "REXYY Alarm", rawCommand = raw)
         }
 
-        return VoiceCommand.SetAlarm(hour = 7, minute = 0, message = "REXYY Alarm", rawInput = raw)
+        // Fallback default alarm
+        return LocalIntent.SetAlarm(hour = 7, minute = 0, message = "REXYY Alarm", rawCommand = raw)
     }
 
     private fun isCalendarCommand(lower: String): Boolean {
@@ -631,10 +774,12 @@ object RexyyCommandRouter {
                 lower.contains("device info") ||
                 lower.contains("phone info") ||
                 lower.contains("system info") ||
-                lower.contains("phone details")
+                lower.contains("phone details") ||
+                lower.contains("device status") ||
+                lower.contains("phone status")
     }
 
-    private fun parseSmsCommand(raw: String, lower: String): VoiceCommand.SendMessage? {
+    private fun parseSmsCommand(raw: String, lower: String): LocalIntent.SendSms? {
         val isSms = lower.startsWith("send sms ") ||
                 lower.startsWith("send message ") ||
                 lower.contains("sms bhejo") ||
@@ -646,32 +791,39 @@ object RexyyCommandRouter {
         if (colonSplit.size >= 2) {
             val target = colonSplit[0].replace("(?i)(send|sms|message|bhejo|ko|to)".toRegex(), "").trim()
             val body = colonSplit.subList(1, colonSplit.size).joinToString(":").trim()
-            return VoiceCommand.SendMessage(target = target, body = body, rawInput = raw)
+            return LocalIntent.SendSms(target = target, body = body, rawCommand = raw)
         }
 
         val target = raw.replace("(?i)(send|sms|message|bhejo|ko|to)".toRegex(), "").trim()
-        return VoiceCommand.SendMessage(target = target.ifBlank { "Contact" }, body = "", rawInput = raw)
+        return LocalIntent.SendSms(target = target.ifBlank { "Contact" }, body = "", rawCommand = raw)
     }
 
-    private fun parseOpenAppCommand(raw: String, lower: String): VoiceCommand.OpenApp? {
-        // "Open <app>" or "Launch <app>"
-        val openPrefixes = listOf("open ", "launch ", "start ")
+    private fun parseOpenAppCommand(raw: String, lower: String): LocalIntent.OpenApp? {
+        // 1. Prefixes: "open <app>", "launch <app>", "start <app>", "kholo <app>", "khol do <app>", "chalao <app>"
+        val openPrefixes = listOf(
+            "open ", "launch ", "start ",
+            "kholo ", "khol do ", "chalao ", "chalu karo "
+        )
         for (prefix in openPrefixes) {
             if (lower.startsWith(prefix)) {
-                val app = raw.substring(prefix.length).trim()
+                val candidate = raw.substring(prefix.length).trim()
+                val app = cleanAppName(candidate)
                 if (app.isNotBlank() && !app.equals("settings", ignoreCase = true) && !app.equals("bluetooth", ignoreCase = true)) {
-                    return VoiceCommand.OpenApp(appName = app, rawInput = raw)
+                    return LocalIntent.OpenApp(appName = app, rawCommand = raw)
                 }
             }
         }
 
-        // "<app> kholo", "<app> open karo", "<app> chalao", "<app> khol do", "<app> chalu karo"
-        val hinglishSuffixes = listOf(" kholo", " open karo", " chalao", " khol do", " chalu karo", " start karo")
+        // 2. Suffixes: "<app> kholo", "<app> open karo", "<app> chalao", "<app> khol do", "<app> chalu karo", "<app> open kar do"
+        val hinglishSuffixes = listOf(
+            " kholo", " open karo", " open kar do", " chalao", " chala do", " khol do", " chalu karo", " start karo"
+        )
         for (suffix in hinglishSuffixes) {
             if (lower.endsWith(suffix)) {
-                val app = raw.substring(0, raw.length - suffix.length).trim()
+                val candidate = raw.substring(0, raw.length - suffix.length).trim()
+                val app = cleanAppName(candidate)
                 if (app.isNotBlank() && !app.equals("settings", ignoreCase = true) && !app.equals("bluetooth", ignoreCase = true)) {
-                    return VoiceCommand.OpenApp(appName = app, rawInput = raw)
+                    return LocalIntent.OpenApp(appName = app, rawCommand = raw)
                 }
             }
         }
@@ -679,54 +831,25 @@ object RexyyCommandRouter {
         return null
     }
 
-    private fun parseSearchCommand(raw: String, lower: String): VoiceCommand.GoogleSearch? {
+    private fun cleanAppName(rawName: String): String {
+        return rawName.replace("(?i)\\b(app|application)\\b".toRegex(), "").trim()
+    }
+
+    private fun parseSearchCommand(raw: String, lower: String): LocalIntent.WebSearch? {
         if (lower.startsWith("search google for ")) {
-            return VoiceCommand.GoogleSearch(raw.substring(18).trim(), raw)
+            return LocalIntent.WebSearch(raw.substring(18).trim(), raw)
         }
         if (lower.startsWith("search for ")) {
-            return VoiceCommand.GoogleSearch(raw.substring(11).trim(), raw)
+            return LocalIntent.WebSearch(raw.substring(11).trim(), raw)
         }
         if (lower.startsWith("search ")) {
-            return VoiceCommand.GoogleSearch(raw.substring(7).trim(), raw)
+            return LocalIntent.WebSearch(raw.substring(7).trim(), raw)
         }
         if (lower.endsWith(" search karo") || lower.endsWith(" google karo")) {
             val q = raw.replace("(?i)(search|google)\\s+karo".toRegex(), "").trim()
-            return VoiceCommand.GoogleSearch(q, raw)
-        }
-        return null
-    }
-
-    private fun parseSettingsCommand(raw: String, lower: String): VoiceCommand.OpenSettings? {
-        if (lower == "settings" || lower == "setting" || lower == "settings kholo" || lower == "open settings" || lower == "system settings") {
-            return VoiceCommand.OpenSettings(subSettings = "", rawInput = raw)
-        }
-        if (lower.contains("display setting") || lower.contains("screen setting")) {
-            return VoiceCommand.OpenSettings(subSettings = "display", rawInput = raw)
-        }
-        if (lower.contains("sound setting") || lower.contains("audio setting") || lower.contains("ringtone setting")) {
-            return VoiceCommand.OpenSettings(subSettings = "sound", rawInput = raw)
-        }
-        if (lower.contains("battery setting") || lower.contains("battery status") || lower.contains("battery saver")) {
-            return VoiceCommand.OpenSettings(subSettings = "battery", rawInput = raw)
-        }
-        if (lower.contains("app setting") || lower.contains("manage apps") || lower.contains("installed apps")) {
-            return VoiceCommand.OpenSettings(subSettings = "apps", rawInput = raw)
-        }
-        if (lower.contains("developer option")) {
-            return VoiceCommand.OpenSettings(subSettings = "developer", rawInput = raw)
-        }
-        if (lower.contains("location setting") || lower.contains("gps setting")) {
-            return VoiceCommand.OpenSettings(subSettings = "location", rawInput = raw)
-        }
-        if (lower.contains("storage setting") || lower.contains("internal storage")) {
-            return VoiceCommand.OpenSettings(subSettings = "storage", rawInput = raw)
-        }
-        if (lower.contains("network setting") || lower.contains("data usage setting")) {
-            return VoiceCommand.OpenSettings(subSettings = "network", rawInput = raw)
-        }
-        if (lower.endsWith(" settings") || lower.startsWith("settings ") || lower.contains("settings kholo") || lower.contains("setting kholo")) {
-            val sub = raw.replace("(?i)(open|settings|setting|kholo|chalao)".toRegex(), "").trim()
-            return VoiceCommand.OpenSettings(subSettings = sub, rawInput = raw)
+            if (q.isNotBlank()) {
+                return LocalIntent.WebSearch(q, raw)
+            }
         }
         return null
     }
@@ -743,34 +866,45 @@ object RexyyCommandRouter {
             .ifBlank { "Reminder" }
     }
 
-    private fun parseAccessibilityAction(trimmed: String, lower: String): VoiceCommand.AccessibilityAction? {
+    private fun parseAccessibilityAction(trimmed: String, lower: String): LocalIntent.AccessibilityAction? {
         if (lower == "scroll down" || lower.contains("neeche scroll") || lower.contains("scroll down")) {
-            return VoiceCommand.AccessibilityAction(VoiceCommand.AccessibilityAction.ActionType.SCROLL_DOWN, rawInput = trimmed)
+            return LocalIntent.AccessibilityAction(VoiceCommand.AccessibilityAction.ActionType.SCROLL_DOWN, rawCommand = trimmed)
         }
         if (lower == "scroll up" || lower.contains("upar scroll") || lower.contains("scroll up")) {
-            return VoiceCommand.AccessibilityAction(VoiceCommand.AccessibilityAction.ActionType.SCROLL_UP, rawInput = trimmed)
+            return LocalIntent.AccessibilityAction(VoiceCommand.AccessibilityAction.ActionType.SCROLL_UP, rawCommand = trimmed)
         }
-        if (lower == "go back" || lower == "back" || lower == "back jao" || lower == "wapas jao" || lower == "back karo" || lower == "exit karo") {
-            return VoiceCommand.AccessibilityAction(VoiceCommand.AccessibilityAction.ActionType.GO_BACK, rawInput = trimmed)
+        if (lower == "go back" || lower == "back" || lower == "back jao" || lower == "wapas jao" || lower == "back karo" || lower == "exit karo" || lower == "exit") {
+            return LocalIntent.AccessibilityAction(VoiceCommand.AccessibilityAction.ActionType.GO_BACK, rawCommand = trimmed)
         }
         if (lower == "go home" || lower == "home" || lower == "home jao" || lower == "home screen" || lower == "home par jao") {
-            return VoiceCommand.AccessibilityAction(VoiceCommand.AccessibilityAction.ActionType.GO_HOME, rawInput = trimmed)
+            return LocalIntent.AccessibilityAction(VoiceCommand.AccessibilityAction.ActionType.GO_HOME, rawCommand = trimmed)
         }
         if (lower == "recent apps" || lower == "recents" || lower == "recent apps kholo" || lower == "multitask") {
-            return VoiceCommand.AccessibilityAction(VoiceCommand.AccessibilityAction.ActionType.RECENTS, rawInput = trimmed)
+            return LocalIntent.AccessibilityAction(VoiceCommand.AccessibilityAction.ActionType.RECENTS, rawCommand = trimmed)
         }
-        if (lower == "copy" || lower == "copy karo") {
-            return VoiceCommand.AccessibilityAction(VoiceCommand.AccessibilityAction.ActionType.COPY, rawInput = trimmed)
+        if (lower == "copy" || lower == "copy karo" || lower == "copy kar do") {
+            return LocalIntent.AccessibilityAction(VoiceCommand.AccessibilityAction.ActionType.COPY, rawCommand = trimmed)
         }
-        if (lower == "paste" || lower == "paste karo") {
-            return VoiceCommand.AccessibilityAction(VoiceCommand.AccessibilityAction.ActionType.PASTE, rawInput = trimmed)
+        if (lower == "paste" || lower == "paste karo" || lower == "paste kar do") {
+            return LocalIntent.AccessibilityAction(VoiceCommand.AccessibilityAction.ActionType.PASTE, rawCommand = trimmed)
         }
-        if (lower.startsWith("type ") || lower.startsWith("write ") || lower.contains(" likho") || lower.startsWith("likho ")) {
+        if (lower == "search" || lower == "search karo" || lower == "search kar do" || lower == "submit search" || lower == "enter press karo" || lower == "search dabao") {
+            return LocalIntent.AccessibilityAction(VoiceCommand.AccessibilityAction.ActionType.SUBMIT_SEARCH, rawCommand = trimmed)
+        }
+        if (lower.startsWith("replace ") || lower.contains("replace karo")) {
+            val text = trimmed.replace("(?i)^(replace with|replace)\\s+".toRegex(), "")
+                .replace("(?i)\\s+replace\\s+karo$".toRegex(), "")
+                .trim()
+            return LocalIntent.AccessibilityAction(VoiceCommand.AccessibilityAction.ActionType.REPLACE_TEXT, argument = text, rawCommand = trimmed)
+        }
+        if (lower.startsWith("type ") || lower.startsWith("write ") || lower.contains(" likho") || lower.startsWith("likho ") ||
+            lower.endsWith(" type karo") || lower.endsWith(" type kar do") || lower.contains(" type karo")) {
             val text = trimmed.replace("(?i)^(type|write|likho)\\s+".toRegex(), "")
+                .replace("(?i)\\s+(type|write)\\s+kar(o|\\s+do)$".toRegex(), "")
                 .replace("(?i)\\s+likho$".toRegex(), "")
                 .trim()
             if (text.isNotBlank()) {
-                return VoiceCommand.AccessibilityAction(VoiceCommand.AccessibilityAction.ActionType.TYPE_TEXT, argument = text, rawInput = trimmed)
+                return LocalIntent.AccessibilityAction(VoiceCommand.AccessibilityAction.ActionType.TYPE_TEXT, argument = text, rawCommand = trimmed)
             }
         }
         return null

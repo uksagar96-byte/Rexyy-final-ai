@@ -349,4 +349,244 @@ class RexyyRobolectricTest {
         assertEquals("weather kaisa hai", chat3.prompt)
         assertEquals(com.rexyy.app.network.provider.AiProviderType.OPENROUTER, chat3.providerOverride)
     }
+
+    @Test
+    fun testPhase4LocalIntentParsingDeterministic() {
+        // 1. Open App variants in Hindi, English, Hinglish
+        val yt1 = com.rexyy.app.router.RexyyCommandRouter.route("YouTube kholo")
+        assertTrue(yt1 is VoiceCommand.OpenApp)
+        assertEquals("YouTube", (yt1 as VoiceCommand.OpenApp).appName)
+
+        val yt2 = com.rexyy.app.router.RexyyCommandRouter.route("open YouTube")
+        assertTrue(yt2 is VoiceCommand.OpenApp)
+        assertEquals("YouTube", (yt2 as VoiceCommand.OpenApp).appName)
+
+        val insta1 = com.rexyy.app.router.RexyyCommandRouter.route("Instagram khol do")
+        assertTrue(insta1 is VoiceCommand.OpenApp)
+        assertEquals("Instagram", (insta1 as VoiceCommand.OpenApp).appName)
+
+        val insta2 = com.rexyy.app.router.RexyyCommandRouter.route("Instagram open kar do")
+        assertTrue(insta2 is VoiceCommand.OpenApp)
+        assertEquals("Instagram", (insta2 as VoiceCommand.OpenApp).appName)
+
+        // 2. Battery & Status
+        val bat1 = com.rexyy.app.router.RexyyCommandRouter.route("battery kitni hai")
+        assertTrue(bat1 is VoiceCommand.GetBattery)
+
+        val bat2 = com.rexyy.app.router.RexyyCommandRouter.route("battery status batao")
+        assertTrue(bat2 is VoiceCommand.GetBattery)
+
+        val bat3 = com.rexyy.app.router.RexyyCommandRouter.route("charge kitna hai")
+        assertTrue(bat3 is VoiceCommand.GetBattery)
+
+        // 3. Date & Time
+        val d1 = com.rexyy.app.router.RexyyCommandRouter.route("aaj ki date kya hai")
+        assertTrue(d1 is VoiceCommand.GetDate)
+
+        val d2 = com.rexyy.app.router.RexyyCommandRouter.route("what is the date")
+        assertTrue(d2 is VoiceCommand.GetDate)
+
+        val t1 = com.rexyy.app.router.RexyyCommandRouter.route("time kya hua")
+        assertTrue(t1 is VoiceCommand.GetTime)
+
+        val t2 = com.rexyy.app.router.RexyyCommandRouter.route("kitne baje hain")
+        assertTrue(t2 is VoiceCommand.GetTime)
+
+        // 4. Flashlight / Torch
+        val torchOn = com.rexyy.app.router.RexyyCommandRouter.route("torch on karo")
+        assertTrue(torchOn is VoiceCommand.ToggleFlashlight)
+        assertTrue((torchOn as VoiceCommand.ToggleFlashlight).turnOn == true)
+
+        val torchOff = com.rexyy.app.router.RexyyCommandRouter.route("torch band karo")
+        assertTrue(torchOff is VoiceCommand.ToggleFlashlight)
+        assertTrue((torchOff as VoiceCommand.ToggleFlashlight).turnOn == false)
+
+        // 5. Brightness
+        val bright1 = com.rexyy.app.router.RexyyCommandRouter.route("brightness 50 percent karo")
+        assertTrue(bright1 is VoiceCommand.AdjustBrightness)
+        assertEquals(50, (bright1 as VoiceCommand.AdjustBrightness).percent)
+
+        val bright2 = com.rexyy.app.router.RexyyCommandRouter.route("brightness badhao")
+        assertTrue(bright2 is VoiceCommand.AdjustBrightness)
+        assertTrue((bright2 as VoiceCommand.AdjustBrightness).raise == true)
+
+        // 6. Volume
+        val vol1 = com.rexyy.app.router.RexyyCommandRouter.route("volume 80% karo")
+        assertTrue(vol1 is VoiceCommand.AdjustVolume)
+        assertEquals(80, (vol1 as VoiceCommand.AdjustVolume).percent)
+
+        val volMute = com.rexyy.app.router.RexyyCommandRouter.route("mute")
+        assertTrue(volMute is VoiceCommand.AdjustVolume)
+        assertTrue((volMute as VoiceCommand.AdjustVolume).mute)
+
+        // 7. Alarms & Timers
+        val alarm = com.rexyy.app.router.RexyyCommandRouter.route("7 baje alarm laga do")
+        assertTrue(alarm is VoiceCommand.SetAlarm)
+        assertEquals(7, (alarm as VoiceCommand.SetAlarm).hour)
+
+        val timer = com.rexyy.app.router.RexyyCommandRouter.route("10 minute ka timer lagao")
+        assertTrue(timer is VoiceCommand.SetTimer)
+        assertEquals(600, (timer as VoiceCommand.SetTimer).seconds)
+
+        // 8. Close / Exit / Minimize
+        val close1 = com.rexyy.app.router.RexyyCommandRouter.route("exit")
+        assertTrue(close1 is VoiceCommand.CloseApp)
+
+        val close2 = com.rexyy.app.router.RexyyCommandRouter.route("background me jao")
+        assertTrue(close2 is VoiceCommand.CloseApp)
+
+        val close3 = com.rexyy.app.router.RexyyCommandRouter.route("close app")
+        assertTrue(close3 is VoiceCommand.CloseApp)
+
+        // 9. Camera & Contacts
+        val cam = com.rexyy.app.router.RexyyCommandRouter.route("camera kholo")
+        assertTrue(cam is VoiceCommand.OpenCamera)
+
+        val cont = com.rexyy.app.router.RexyyCommandRouter.route("contacts kholo")
+        assertTrue(cont is VoiceCommand.OpenContacts)
+
+        // 10. Device Status
+        val devStatus = com.rexyy.app.router.RexyyCommandRouter.route("device status")
+        assertTrue(devStatus is VoiceCommand.GetDeviceInfo)
+    }
+
+    @Test
+    fun testPhase4ExecutionAndDiagnostics() = kotlinx.coroutines.runBlocking {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        com.rexyy.app.router.CommandDiagnosticLogger.clear()
+
+        // 1. Execute Date
+        val dateCmd = VoiceCommand.GetDate("aaj ki date kya hai")
+        val dateRes = com.rexyy.app.voice.VoiceCommandExecutor.execute(dateCmd, context)
+        assertTrue(dateRes is com.rexyy.app.voice.VoiceCommandResult.Handled)
+        assertTrue((dateRes as com.rexyy.app.voice.VoiceCommandResult.Handled).replyText.contains("date"))
+
+        // Check diagnostic logger
+        val latestLog = com.rexyy.app.router.CommandDiagnosticLogger.getLatest()
+        assertNotNull(latestLog)
+        assertEquals("GetDate", latestLog?.detectedIntent)
+        assertEquals("VERIFIED", latestLog?.verificationResult)
+        assertEquals("aaj ki date kya hai", latestLog?.rawCommand)
+
+        // 2. Execute Time
+        val timeCmd = VoiceCommand.GetTime("time kya hua")
+        val timeRes = com.rexyy.app.voice.VoiceCommandExecutor.execute(timeCmd, context)
+        assertTrue(timeRes is com.rexyy.app.voice.VoiceCommandResult.Handled)
+
+        val latestLog2 = com.rexyy.app.router.CommandDiagnosticLogger.getLatest()
+        assertNotNull(latestLog2)
+        assertEquals("GetTime", latestLog2?.detectedIntent)
+        assertEquals("VERIFIED", latestLog2?.verificationResult)
+    }
+
+    @Test
+    fun testPhase5AppLaunchResolution() {
+        val ytCmd = com.rexyy.app.router.RexyyCommandRouter.route("YouTube kholo")
+        assertTrue(ytCmd is VoiceCommand.OpenApp)
+        assertEquals("YouTube", (ytCmd as VoiceCommand.OpenApp).appName)
+
+        val ytMusicCmd = com.rexyy.app.router.RexyyCommandRouter.route("YouTube Music kholo")
+        assertTrue(ytMusicCmd is VoiceCommand.OpenApp)
+        assertEquals("YouTube Music", (ytMusicCmd as VoiceCommand.OpenApp).appName)
+
+        val instaCmd = com.rexyy.app.router.RexyyCommandRouter.route("Instagram kholo")
+        assertTrue(instaCmd is VoiceCommand.OpenApp)
+        assertEquals("Instagram", (instaCmd as VoiceCommand.OpenApp).appName)
+
+        // Test AppMatcher strict disambiguation
+        val mockInstalled = listOf(
+            com.rexyy.app.launcher.AppInfo(
+                label = "YouTube",
+                packageName = "com.google.android.youtube",
+                activityName = "com.google.android.youtube.HomeActivity",
+                aliases = listOf("yt", "youtube")
+            ),
+            com.rexyy.app.launcher.AppInfo(
+                label = "YouTube Music",
+                packageName = "com.google.android.apps.youtube.music",
+                activityName = "com.google.android.apps.youtube.music.activities.MusicActivity",
+                aliases = listOf("yt music", "youtube music")
+            ),
+            com.rexyy.app.launcher.AppInfo(
+                label = "Instagram",
+                packageName = "com.instagram.android",
+                activityName = "com.instagram.mainactivity.MainActivity",
+                aliases = listOf("insta", "ig")
+            )
+        )
+
+        // YouTube must match YouTube and NOT YouTube Music
+        val ytMatch = com.rexyy.app.launcher.AppMatcher.matchApp("YouTube", mockInstalled)
+        assertTrue(ytMatch is com.rexyy.app.launcher.AppMatchResult.Exact)
+        assertEquals("com.google.android.youtube", (ytMatch as com.rexyy.app.launcher.AppMatchResult.Exact).app.packageName)
+
+        // YouTube Music must match YouTube Music
+        val ytMusicMatch = com.rexyy.app.launcher.AppMatcher.matchApp("YouTube Music", mockInstalled)
+        assertTrue(ytMusicMatch is com.rexyy.app.launcher.AppMatchResult.Exact)
+        assertEquals("com.google.android.apps.youtube.music", (ytMusicMatch as com.rexyy.app.launcher.AppMatchResult.Exact).app.packageName)
+
+        // Instagram must match Instagram
+        val instaMatch = com.rexyy.app.launcher.AppMatcher.matchApp("Instagram", mockInstalled)
+        assertTrue(instaMatch is com.rexyy.app.launcher.AppMatchResult.Exact)
+        assertEquals("com.instagram.android", (instaMatch as com.rexyy.app.launcher.AppMatchResult.Exact).app.packageName)
+    }
+
+    @Test
+    fun testPhase5AppSpecificSearchCommands() {
+        // Test Case 4: "YouTube pe cricket search karo"
+        val cmd1 = com.rexyy.app.router.RexyyCommandRouter.route("YouTube pe cricket search karo")
+        assertTrue(cmd1 is VoiceCommand.AppSearch)
+        val s1 = cmd1 as VoiceCommand.AppSearch
+        assertEquals("youtube", s1.targetApp)
+        assertEquals("cricket", s1.query)
+
+        // Test Case 5: "Chrome me REXYY search karo"
+        val cmd2 = com.rexyy.app.router.RexyyCommandRouter.route("Chrome me REXYY search karo")
+        assertTrue(cmd2 is VoiceCommand.AppSearch)
+        val s2 = cmd2 as VoiceCommand.AppSearch
+        assertEquals("chrome", s2.targetApp)
+        assertEquals("REXYY", s2.query)
+
+        // Test Case 6: "Maps me Bangalore airport search karo"
+        val cmd3 = com.rexyy.app.router.RexyyCommandRouter.route("Maps me Bangalore airport search karo")
+        assertTrue(cmd3 is VoiceCommand.AppSearch)
+        val s3 = cmd3 as VoiceCommand.AppSearch
+        assertEquals("maps", s3.targetApp)
+        assertEquals("Bangalore airport", s3.query)
+
+        // Test Case 7: "Spotify pe Arijit Singh search karo"
+        val cmd4 = com.rexyy.app.router.RexyyCommandRouter.route("Spotify pe Arijit Singh search karo")
+        assertTrue(cmd4 is VoiceCommand.AppSearch)
+        val s4 = cmd4 as VoiceCommand.AppSearch
+        assertEquals("spotify", s4.targetApp)
+        assertEquals("Arijit Singh", s4.query)
+
+        // Test Case 8: "YouTube kholo aur cricket search karo"
+        val cmd5 = com.rexyy.app.router.RexyyCommandRouter.route("YouTube kholo aur cricket search karo")
+        assertTrue(cmd5 is VoiceCommand.AppSearch)
+        val s5 = cmd5 as VoiceCommand.AppSearch
+        assertEquals("youtube", s5.targetApp)
+        assertEquals("cricket", s5.query)
+    }
+
+    @Test
+    fun testPhase5SearchExecutionAndDiagnostics() = kotlinx.coroutines.runBlocking {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        com.rexyy.app.router.CommandDiagnosticLogger.clear()
+
+        val searchCmd = VoiceCommand.AppSearch(
+            targetApp = "youtube",
+            query = "cricket",
+            rawInput = "YouTube pe cricket search karo"
+        )
+        val result = com.rexyy.app.voice.VoiceCommandExecutor.execute(searchCmd, context)
+
+        val latestLog = com.rexyy.app.router.CommandDiagnosticLogger.getLatest()
+        assertNotNull(latestLog)
+        assertEquals("YouTube pe cricket search karo", latestLog?.rawCommand)
+        assertEquals("AppSearch", latestLog?.detectedIntent)
+        assertEquals("YouTube", latestLog?.targetApp)
+        assertEquals("cricket", latestLog?.searchQuery)
+        assertNotNull(latestLog?.verificationResult)
+    }
 }
