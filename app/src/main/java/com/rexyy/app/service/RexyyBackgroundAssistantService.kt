@@ -18,6 +18,8 @@ import androidx.core.app.NotificationCompat
 import androidx.core.app.ServiceCompat
 import com.rexyy.app.MainActivity
 import com.rexyy.app.R
+import com.rexyy.app.notifications.NotificationSpeechCoordinator
+import com.rexyy.app.notifications.RexyyNotificationListenerService
 import com.rexyy.app.router.RexyyCommandRouter
 import com.rexyy.app.voice.VoiceCommandExecutor
 import com.rexyy.app.voice.VoiceCommandResult
@@ -77,6 +79,18 @@ class RexyyBackgroundAssistantService : Service(), WakeWordListener {
 
     private var isDestroyed = false
 
+    private val notificationSpeechListener: (Boolean) -> Unit = { isSpeaking ->
+        if (isSpeaking) {
+            wakeWordDetector?.pauseForSpeaking()
+        } else {
+            if (!isDestroyed && RexyyAssistantServiceState.serviceRunning.value &&
+                RexyyAssistantServiceState.currentState.value == WakeWordState.WAKE_STANDBY
+            ) {
+                wakeWordDetector?.resumeAfterSpeaking()
+            }
+        }
+    }
+
     companion object {
         const val CHANNEL_ID = "rexyy_background_assistant_channel"
         const val NOTIFICATION_ID = 9001
@@ -111,6 +125,8 @@ class RexyyBackgroundAssistantService : Service(), WakeWordListener {
         wakeWordDetector = WakeWordDetector.create(this).apply {
             setListener(this@RexyyBackgroundAssistantService)
         }
+
+        NotificationSpeechCoordinator.registerListener(notificationSpeechListener)
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -124,6 +140,13 @@ class RexyyBackgroundAssistantService : Service(), WakeWordListener {
         syncState(WakeWordState.WAKE_STANDBY)
 
         wakeWordDetector?.startStandby()
+
+        // Ensure notification listener service is recovered/rebound if user granted access
+        try {
+            if (RexyyNotificationListenerService.isNotificationAccessEnabled(this)) {
+                RexyyNotificationListenerService.rebindIfNecessary(this)
+            }
+        } catch (_: Exception) {}
 
         return START_STICKY
     }
@@ -304,6 +327,7 @@ class RexyyBackgroundAssistantService : Service(), WakeWordListener {
 
     override fun onDestroy() {
         isDestroyed = true
+        NotificationSpeechCoordinator.unregisterListener(notificationSpeechListener)
         RexyyAssistantServiceState.updateRunning(false)
         syncState(WakeWordState.WAKE_STANDBY)
 

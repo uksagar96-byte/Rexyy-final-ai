@@ -104,6 +104,18 @@
             </intent-filter>
         </service>
 
+        <!-- Boot & Package Replacement Receiver for Clean Recovery -->
+        <receiver
+            android:name="com.rexyy.app.service.RexyyBootReceiver"
+            android:exported="true"
+            android:enabled="true">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+                <action android:name="android.intent.action.LOCKED_BOOT_COMPLETED" />
+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
+            </intent-filter>
+        </receiver>
+
     </application>
 
 </manifest>

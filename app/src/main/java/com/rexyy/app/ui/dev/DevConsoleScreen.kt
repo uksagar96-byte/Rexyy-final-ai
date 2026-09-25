@@ -6,6 +6,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -31,8 +32,10 @@ import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
@@ -89,6 +92,14 @@ fun DevConsoleScreen(
     val lastRecognizerEvent by com.rexyy.app.service.BackgroundListeningDiagnostics.lastRecognizerEvent.collectAsState()
     val recoveryAttempts by com.rexyy.app.service.BackgroundListeningDiagnostics.recoveryAttempts.collectAsState()
     val lastErrorDesc by com.rexyy.app.service.BackgroundListeningDiagnostics.lastErrorDescription.collectAsState()
+
+    val isNotifConnected by RexyyNotificationListenerService.isListenerConnected.collectAsState()
+    val notifReconnectAttempts by RexyyNotificationListenerService.reconnectAttempts.collectAsState()
+    val notifStatus by Phase7DiagnosticManager.notificationAccessStatus.collectAsState()
+    val lastNotifEvent by Phase7DiagnosticManager.lastNotificationEvent.collectAsState()
+    val lastNotifError by Phase7DiagnosticManager.lastNotificationError.collectAsState()
+    val notifOutcome by Phase7DiagnosticManager.lastAnnouncementOutcome.collectAsState()
+    val isNotifAccessEnabled = RexyyNotificationListenerService.isNotificationAccessEnabled(context)
 
     val diagnosticTraces by CommandDiagnosticLogger.traces.collectAsState()
 
@@ -226,6 +237,129 @@ fun DevConsoleScreen(
                             text = "Last Error: $lastErrorDesc",
                             style = MaterialTheme.typography.labelSmall.copy(color = Color(0xFFFF8A80))
                         )
+                    }
+                }
+            }
+
+            Spacer(modifier = Modifier.height(10.dp))
+
+            // Notification Intelligence Lifecycle & Recovery Card
+            Card(
+                shape = RoundedCornerShape(12.dp),
+                colors = CardDefaults.cardColors(containerColor = RexyyDarkSurface),
+                border = BorderStroke(1.dp, RexyyDarkBorder),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Column(modifier = Modifier.padding(12.dp)) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = "NOTIFICATION INTELLIGENCE",
+                            style = MaterialTheme.typography.labelMedium.copy(
+                                fontWeight = FontWeight.Bold,
+                                color = RexyyCyanPrimary
+                            )
+                        )
+
+                        val statusColor = when {
+                            !isNotifAccessEnabled -> Color(0xFFFF8A80)
+                            isNotifConnected -> RexyyNeonGreen
+                            else -> Color(0xFFFFD54F)
+                        }
+                        val statusText = when {
+                            !isNotifAccessEnabled -> "DISABLED"
+                            isNotifConnected -> "CONNECTED"
+                            else -> "REBINDING..."
+                        }
+
+                        Surface(
+                            shape = RoundedCornerShape(6.dp),
+                            color = statusColor.copy(alpha = 0.15f)
+                        ) {
+                            Text(
+                                text = statusText,
+                                style = MaterialTheme.typography.labelSmall.copy(
+                                    fontWeight = FontWeight.Bold,
+                                    color = statusColor
+                                ),
+                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                            )
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(6.dp))
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Text(
+                            text = "Access Enabled: ${if (isNotifAccessEnabled) "Yes" else "No"}",
+                            style = MaterialTheme.typography.labelSmall.copy(color = RexyyTextMuted)
+                        )
+                        Text(
+                            text = "Rebind Attempts: $notifReconnectAttempts",
+                            style = MaterialTheme.typography.labelSmall.copy(color = RexyyTextMuted)
+                        )
+                    }
+
+                    if (!lastNotifEvent.isNullOrBlank()) {
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Text(
+                            text = "Event: $lastNotifEvent",
+                            style = MaterialTheme.typography.bodySmall.copy(
+                                color = RexyyTextSecondary,
+                                fontSize = 11.sp
+                            )
+                        )
+                    }
+
+                    Spacer(modifier = Modifier.height(2.dp))
+                    Text(
+                        text = "Outcome: ${notifOutcome ?: "Idle"}",
+                        style = MaterialTheme.typography.labelSmall.copy(
+                            color = if (notifOutcome?.contains("Failed") == true) Color(0xFFFF8A80) else RexyyCyanLight
+                        )
+                    )
+
+                    if (!lastNotifError.isNullOrBlank()) {
+                        Spacer(modifier = Modifier.height(2.dp))
+                        Text(
+                            text = "Diagnostic: $lastNotifError",
+                            style = MaterialTheme.typography.labelSmall.copy(color = Color(0xFFFF8A80))
+                        )
+                    }
+
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.End,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        if (!isNotifAccessEnabled) {
+                            OutlinedButton(
+                                onClick = { RexyyNotificationListenerService.openNotificationAccessSettings(context) },
+                                shape = RoundedCornerShape(8.dp),
+                                contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp),
+                                modifier = Modifier.height(30.dp)
+                            ) {
+                                Text("OPEN SETTINGS", fontSize = 10.sp, color = RexyyCyanPrimary)
+                            }
+                            Spacer(modifier = Modifier.width(8.dp))
+                        }
+
+                        Button(
+                            onClick = { RexyyNotificationListenerService.rebindIfNecessary(context, force = true) },
+                            shape = RoundedCornerShape(8.dp),
+                            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp),
+                            colors = ButtonDefaults.buttonColors(containerColor = RexyyCyanPrimary),
+                            modifier = Modifier.height(30.dp)
+                        ) {
+                            Text("REBIND LISTENER", fontSize = 10.sp, color = Color.Black, fontWeight = FontWeight.Bold)
+                        }
                     }
                 }
             }

@@ -130,10 +130,29 @@ object Phase7DiagnosticManager {
     private val _lastNotificationEvent = MutableStateFlow<String?>(null)
     val lastNotificationEvent: StateFlow<String?> = _lastNotificationEvent.asStateFlow()
 
-    fun updateNotificationState(status: NotificationAccessStatus, source: String? = null, event: String? = null) {
+    private val _lastNotificationError = MutableStateFlow<String?>(null)
+    val lastNotificationError: StateFlow<String?> = _lastNotificationError.asStateFlow()
+
+    private val _notificationReconnectAttempts = MutableStateFlow(0)
+    val notificationReconnectAttempts: StateFlow<Int> = _notificationReconnectAttempts.asStateFlow()
+
+    private val _lastAnnouncementOutcome = MutableStateFlow<String?>("Standby")
+    val lastAnnouncementOutcome: StateFlow<String?> = _lastAnnouncementOutcome.asStateFlow()
+
+    fun updateNotificationState(
+        status: NotificationAccessStatus,
+        source: String? = null,
+        event: String? = null,
+        error: String? = null,
+        reconnectAttempts: Int? = null,
+        outcome: String? = null
+    ) {
         _notificationAccessStatus.value = status
         if (source != null) _lastNotificationSource.value = source
         if (event != null) _lastNotificationEvent.value = event
+        if (error != null) _lastNotificationError.value = error
+        if (reconnectAttempts != null) _notificationReconnectAttempts.value = reconnectAttempts
+        if (outcome != null) _lastAnnouncementOutcome.value = outcome
     }
 
     // --- Charging ---
@@ -187,6 +206,9 @@ object Phase7DiagnosticManager {
         _notificationAccessStatus.value = NotificationAccessStatus.ACCESS_INACTIVE
         _lastNotificationSource.value = null
         _lastNotificationEvent.value = null
+        _lastNotificationError.value = null
+        _notificationReconnectAttempts.value = 0
+        _lastAnnouncementOutcome.value = "Standby"
 
         _chargingState.value = ChargingState.DISCONNECTED
         _batteryPercentage.value = 100

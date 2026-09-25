@@ -79,6 +79,7 @@ object CapabilityManager {
 
         // 3. Notification Access Service
         val hasNotifAccess = isNotificationAccessEnabled(context)
+        val isNotifListenerConnected = RexyyNotificationListenerService.isListenerConnected.value
 
         // 4. Accessibility Service
         val isA11y = isAccessibilityEnabled(context)
@@ -148,9 +149,17 @@ object CapabilityManager {
                 category = "Automation & Intelligence",
                 description = "Reads incoming notifications to announce sender and content hands-free.",
                 rationale = "Enables REXXY to announce incoming WhatsApp messages, SMS, and important alerts when your phone is in pocket or dock.",
-                status = if (hasNotifAccess) CapabilityStatus.AVAILABLE else CapabilityStatus.NEEDS_SETUP,
-                isGranted = hasNotifAccess,
-                statusLabel = if (hasNotifAccess) "Enabled" else "Needs Setup",
+                status = when {
+                    !hasNotifAccess -> CapabilityStatus.NEEDS_SETUP
+                    !isNotifListenerConnected -> CapabilityStatus.NEEDS_SETUP
+                    else -> CapabilityStatus.AVAILABLE
+                },
+                isGranted = hasNotifAccess && isNotifListenerConnected,
+                statusLabel = when {
+                    !hasNotifAccess -> "Needs Setup"
+                    !isNotifListenerConnected -> "Connecting..."
+                    else -> "Active"
+                },
                 requiresNotificationAccess = true
             ),
 
