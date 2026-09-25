@@ -60,12 +60,15 @@ class CallStateManager(private val context: Context) {
                             callerName = "Incoming Call",
                             phoneNumber = null
                         )
+                        Phase7DiagnosticManager.updateCallState(CallLifecycleState.ACTIVE, "Incoming Call")
                     }
                     TelephonyManager.CALL_STATE_OFFHOOK -> {
                         _callStatus.value = _callStatus.value.copy(state = TelephonyState.ACTIVE)
+                        Phase7DiagnosticManager.updateCallState(CallLifecycleState.ACTIVE)
                     }
                     TelephonyManager.CALL_STATE_IDLE -> {
                         _callStatus.value = CallStatus(state = TelephonyState.IDLE)
+                        Phase7DiagnosticManager.updateCallState(CallLifecycleState.ENDED)
                     }
                 }
             }
@@ -87,12 +90,15 @@ class CallStateManager(private val context: Context) {
                             callerName = resolvedName,
                             phoneNumber = phoneNumber
                         )
+                        Phase7DiagnosticManager.updateCallState(CallLifecycleState.ACTIVE, resolvedName ?: "Incoming Call")
                     }
                     TelephonyManager.CALL_STATE_OFFHOOK -> {
                         _callStatus.value = _callStatus.value.copy(state = TelephonyState.ACTIVE)
+                        Phase7DiagnosticManager.updateCallState(CallLifecycleState.ACTIVE)
                     }
                     TelephonyManager.CALL_STATE_IDLE -> {
                         _callStatus.value = CallStatus(state = TelephonyState.IDLE)
+                        Phase7DiagnosticManager.updateCallState(CallLifecycleState.ENDED)
                     }
                 }
             }

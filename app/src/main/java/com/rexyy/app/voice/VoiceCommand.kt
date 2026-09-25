@@ -46,5 +46,7 @@ sealed class VoiceCommand {
         }
     }
     data class SetReminder(val title: String = "", val rawInput: String) : VoiceCommand()
+    data class ReadNotifications(val rawInput: String) : VoiceCommand()
+    data class CheckCharging(val rawInput: String) : VoiceCommand()
     data class AiChat(val prompt: String, val providerOverride: AiProviderType? = null) : VoiceCommand()
 }

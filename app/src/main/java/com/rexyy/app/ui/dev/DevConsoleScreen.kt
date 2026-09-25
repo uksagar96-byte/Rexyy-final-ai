@@ -55,6 +55,8 @@ import com.rexyy.app.device.DeviceTelemetryManager
 import com.rexyy.app.router.CommandDiagnosticLogger
 import com.rexyy.app.router.RexyyCommandRouter
 import com.rexyy.app.service.RexyyAssistantServiceState
+import com.rexyy.app.telecom.Phase7DiagnosticManager
+import com.rexyy.app.notifications.RexyyNotificationListenerService
 import com.rexyy.app.ui.theme.RexyyCyanLight
 import com.rexyy.app.ui.theme.RexyyCyanPrimary
 import com.rexyy.app.ui.theme.RexyyDarkBackground
@@ -82,6 +84,11 @@ fun DevConsoleScreen(
     val isBgRunning by RexyyAssistantServiceState.serviceRunning.collectAsState()
     val lastBgCmd by RexyyAssistantServiceState.lastRecognizedCommand.collectAsState()
     val lastBgFeedback by RexyyAssistantServiceState.lastExecutionFeedback.collectAsState()
+
+    val activeRecognizers by com.rexyy.app.service.BackgroundListeningDiagnostics.activeRecognizersCount.collectAsState()
+    val lastRecognizerEvent by com.rexyy.app.service.BackgroundListeningDiagnostics.lastRecognizerEvent.collectAsState()
+    val recoveryAttempts by com.rexyy.app.service.BackgroundListeningDiagnostics.recoveryAttempts.collectAsState()
+    val lastErrorDesc by com.rexyy.app.service.BackgroundListeningDiagnostics.lastErrorDescription.collectAsState()
 
     val diagnosticTraces by CommandDiagnosticLogger.traces.collectAsState()
 
@@ -193,6 +200,31 @@ fun DevConsoleScreen(
                         Text(
                             text = "Feedback: $lastBgFeedback",
                             style = MaterialTheme.typography.bodySmall.copy(color = RexyyCyanLight)
+                        )
+                    }
+
+                    Spacer(modifier = Modifier.height(6.dp))
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Text(
+                            text = "Active Recognizers: $activeRecognizers",
+                            style = MaterialTheme.typography.labelSmall.copy(color = RexyyTextMuted)
+                        )
+                        Text(
+                            text = "Recoveries: $recoveryAttempts",
+                            style = MaterialTheme.typography.labelSmall.copy(color = RexyyTextMuted)
+                        )
+                    }
+                    Text(
+                        text = "Recognizer Event: $lastRecognizerEvent",
+                        style = MaterialTheme.typography.labelSmall.copy(color = RexyyTextSecondary)
+                    )
+                    if (!lastErrorDesc.isNullOrBlank()) {
+                        Text(
+                            text = "Last Error: $lastErrorDesc",
+                            style = MaterialTheme.typography.labelSmall.copy(color = Color(0xFFFF8A80))
                         )
                     }
                 }

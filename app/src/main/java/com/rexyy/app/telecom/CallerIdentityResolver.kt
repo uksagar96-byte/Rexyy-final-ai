@@ -18,11 +18,27 @@ object CallerIdentityResolver {
         data class MultipleMatches(val query: String, val matches: List<ContactMatch>) : ContactSearchResult()
     }
 
+    sealed class ContactActionResult {
+        data class Resolved(val contact: ContactMatch) : ContactActionResult()
+        data class Multiple(val query: String, val matches: List<ContactMatch>) : ContactActionResult()
+        data class NotFound(val query: String) : ContactActionResult()
+        object PermissionNeeded : ContactActionResult()
+    }
+
+    @Volatile
+    var testContacts: List<ContactMatch>? = null
+
     /**
      * Resolves a phone number to a Contact Name using Android ContactsContract.PhoneLookup
      */
     fun resolveCallerName(context: Context, phoneNumber: String?): String? {
         if (phoneNumber.isNullOrBlank()) return null
+
+        testContacts?.let { list ->
+            val cleanTarget = phoneNumber.replace(Regex("[^0-9+]"), "")
+            return list.firstOrNull { it.phoneNumber.replace(Regex("[^0-9+]"), "") == cleanTarget }?.name
+        }
+
         if (ContextCompat.checkSelfPermission(context, Manifest.permission.READ_CONTACTS) != PackageManager.PERMISSION_GRANTED) {
             return null
         }
@@ -43,10 +59,13 @@ object CallerIdentityResolver {
 
     /**
      * Looks up a contact's phone number by name from the device Contacts.
+     * Safely returns phone number only if unambiguous.
      */
     fun findPhoneNumberByName(context: Context, contactName: String): String? {
-        val result = searchContacts(context, contactName)
-        return result.firstOrNull()?.phoneNumber
+        return when (val res = resolveContactForAction(context, contactName)) {
+            is ContactActionResult.Resolved -> res.contact.phoneNumber
+            else -> null
+        }
     }
 
     /**
@@ -55,6 +74,22 @@ object CallerIdentityResolver {
     fun searchContacts(context: Context, query: String): List<ContactMatch> {
         val trimmed = query.trim()
         if (trimmed.isBlank()) return emptyList()
+
+        testContacts?.let { list ->
+            val lower = trimmed.lowercase()
+            val matches = list.filter { it.name.lowercase().contains(lower) || it.phoneNumber.contains(trimmed) }
+            val deduped = matches.distinctBy { it.name.lowercase() to it.phoneNumber.replace(Regex("[^0-9+]"), "") }
+            return deduped.sortedWith(
+                compareBy<ContactMatch> {
+                    when {
+                        it.name.equals(trimmed, ignoreCase = true) -> 0
+                        it.name.startsWith(trimmed, ignoreCase = true) -> 1
+                        else -> 2
+                    }
+                }.thenBy { it.name }
+            )
+        }
+
         if (ContextCompat.checkSelfPermission(context, Manifest.permission.READ_CONTACTS) != PackageManager.PERMISSION_GRANTED) {
             return emptyList()
         }
@@ -102,23 +137,55 @@ object CallerIdentityResolver {
      * Resolves contact query to a structured search result for voice/assistant responses.
      */
     fun resolveContactSummary(context: Context, query: String): ContactSearchResult {
-        if (ContextCompat.checkSelfPermission(context, Manifest.permission.READ_CONTACTS) != PackageManager.PERMISSION_GRANTED) {
+        if (testContacts == null && ContextCompat.checkSelfPermission(context, Manifest.permission.READ_CONTACTS) != PackageManager.PERMISSION_GRANTED) {
+            Phase7DiagnosticManager.updateContactsState(ContactsLookupState.PERMISSION_REQUIRED, query, 0)
             return ContactSearchResult.PermissionNeeded
         }
 
         val matches = searchContacts(context, query)
-        return when {
-            matches.isEmpty() -> ContactSearchResult.NotFound(query)
-            matches.size == 1 -> ContactSearchResult.SingleMatch(matches.first())
+        val result = when {
+            matches.isEmpty() -> {
+                Phase7DiagnosticManager.updateContactsState(ContactsLookupState.NOT_FOUND, query, 0)
+                ContactSearchResult.NotFound(query)
+            }
+            matches.size == 1 -> {
+                Phase7DiagnosticManager.updateContactsState(ContactsLookupState.FOUND, query, 1)
+                ContactSearchResult.SingleMatch(matches.first())
+            }
             else -> {
-                // If there is an exact case-insensitive match, prioritize it
-                val exactMatch = matches.firstOrNull { it.name.equals(query.trim(), ignoreCase = true) }
-                if (exactMatch != null && matches.count { it.name.equals(query.trim(), ignoreCase = true) } == 1) {
-                    ContactSearchResult.SingleMatch(exactMatch)
+                // If there is an exact case-insensitive match and it's unique
+                val exactMatches = matches.filter { it.name.equals(query.trim(), ignoreCase = true) }
+                if (exactMatches.size == 1) {
+                    Phase7DiagnosticManager.updateContactsState(ContactsLookupState.FOUND, query, 1)
+                    ContactSearchResult.SingleMatch(exactMatches.first())
                 } else {
+                    Phase7DiagnosticManager.updateContactsState(ContactsLookupState.MULTIPLE, query, matches.size)
                     ContactSearchResult.MultipleMatches(query, matches)
                 }
             }
+        }
+        return result
+    }
+
+    /**
+     * Unambiguously resolves a contact query for an action (Call, SMS, WhatsApp).
+     * If multiple contacts match and none is uniquely exact, stops safely with Multiple.
+     */
+    fun resolveContactForAction(context: Context, query: String): ContactActionResult {
+        val trimmed = query.trim()
+        if (trimmed.isBlank()) return ContactActionResult.NotFound(query)
+
+        // If the query is already an explicit phone number with at least 3 digits
+        val digitsOnly = trimmed.filter { it.isDigit() || it == '+' }
+        if (digitsOnly.length >= 7 && digitsOnly.length == trimmed.replace(" ", "").replace("-", "").length) {
+            return ContactActionResult.Resolved(ContactMatch(name = trimmed, phoneNumber = trimmed))
+        }
+
+        return when (val summary = resolveContactSummary(context, trimmed)) {
+            is ContactSearchResult.PermissionNeeded -> ContactActionResult.PermissionNeeded
+            is ContactSearchResult.NotFound -> ContactActionResult.NotFound(trimmed)
+            is ContactSearchResult.SingleMatch -> ContactActionResult.Resolved(summary.contact)
+            is ContactSearchResult.MultipleMatches -> ContactActionResult.Multiple(trimmed, summary.matches)
         }
     }
 }

@@ -93,9 +93,15 @@ object RexyyCommandRouter {
         val closeIntent = parseCloseCommand(trimmed, lower)
         if (closeIntent != null) return closeIntent
 
-        // --- 0.2 Local Device Telemetry & Sensors (Battery, Date, Time, Flashlight) ---
+        // --- 0.2 Local Device Telemetry & Sensors (Battery, Charging, Date, Time, Flashlight) ---
+        if (isChargingCommand(lower)) {
+            return LocalIntent.CheckCharging(rawCommand = trimmed)
+        }
         if (isBatteryCommand(lower)) {
             return LocalIntent.GetBattery(rawCommand = trimmed)
+        }
+        if (isNotificationCommand(lower)) {
+            return LocalIntent.ReadNotifications(rawCommand = trimmed)
         }
         if (isDateCommand(lower)) {
             return LocalIntent.GetDate(rawCommand = trimmed)
@@ -238,6 +244,32 @@ object RexyyCommandRouter {
             return LocalIntent.CloseApp(target = target, rawCommand = raw)
         }
         return null
+    }
+
+    private fun isChargingCommand(lower: String): Boolean {
+        return lower.contains("charger connect") ||
+                lower.contains("charger laga") ||
+                lower.contains("charging ho rahi") ||
+                lower.contains("charging status") ||
+                lower.contains("is phone charging") ||
+                lower.contains("is charger connected") ||
+                lower == "charging"
+    }
+
+    private fun isNotificationCommand(lower: String): Boolean {
+        return lower.contains("notification sunao") ||
+                lower.contains("notifications sunao") ||
+                lower.contains("notification padho") ||
+                lower.contains("notifications padho") ||
+                lower.contains("read notifications") ||
+                lower.contains("read my notifications") ||
+                lower.contains("read notification") ||
+                lower.contains("show notifications") ||
+                lower.contains("check notifications") ||
+                lower.contains("notification status") ||
+                lower.contains("kya notification aaya") ||
+                lower == "notifications" ||
+                lower == "notification"
     }
 
     private fun isBatteryCommand(lower: String): Boolean {
@@ -483,12 +515,14 @@ object RexyyCommandRouter {
             target = raw.replace("(?i)\\s+(ko)?\\s+(call|phone)\\s+(karo|lagao|milao)".toRegex(), "").trim()
         }
 
+        val cleanedTarget = cleanTargetName(target)
+
         // Avoid triggering on "call control" phrases
-        if (target.isBlank() || target.equals("reject", ignoreCase = true) || target.equals("answer", ignoreCase = true)) {
+        if (cleanedTarget.isBlank() || cleanedTarget.equals("reject", ignoreCase = true) || cleanedTarget.equals("answer", ignoreCase = true)) {
             return null
         }
 
-        return LocalIntent.CallContact(target = target, rawCommand = raw)
+        return LocalIntent.CallContact(target = cleanedTarget, rawCommand = raw)
     }
 
     private fun parseWhatsAppCommand(raw: String, lower: String): LocalIntent? {
@@ -511,15 +545,6 @@ object RexyyCommandRouter {
             return LocalIntent.WhatsAppMessage(target = target, body = body, rawCommand = raw)
         }
 
-        // "Ramzan ko WhatsApp pe bol kal milte hain" / "Rahul ko whatsapp par bolo main late ho jaunga"
-        val boloPattern = Regex("(?i)^(.+?)\\s+ko\\s+whats\\s*app\\s*(par|pe)?\\s*(bolo|bol|bhejo|likho|send karo|kaho|likh do|bhej do)\\s+(.+)$")
-        val boloMatch = boloPattern.find(raw)
-        if (boloMatch != null) {
-            val target = cleanTargetName(boloMatch.groupValues[1])
-            val message = boloMatch.groupValues[4].trim()
-            return LocalIntent.WhatsAppMessage(target = target, body = message, rawCommand = raw)
-        }
-
         // "send WhatsApp message on Ramzan" / "send whatsapp message to Ramzan" / "send whatsapp to Ramzan"
         val sendToMatch = Regex("(?i)^(send|bhejo)?\\s*whats\\s*app\\s+(message\\s+)?(to|on|for)?\\s*(.+)$").find(raw)
         if (sendToMatch != null) {
@@ -529,13 +554,33 @@ object RexyyCommandRouter {
             }
         }
 
-        // "Ramzan ko whatsapp message bhejo" / "Ramzan ko whatsapp bhejo"
-        val hindiSendMatch = Regex("(?i)^(.+?)\\s+ko\\s+whats\\s*app\\s*(message\\s+)?(bhejo|karo|send karo)?$").find(raw)
+        // "Ramzan ko whatsapp message bhejo" / "Ramzan ko whatsapp bhejo" (no body specified)
+        val hindiSendMatch = Regex("(?i)^(.+?)\\s+ko\\s+whats\\s*app\\s*(?:par|pe|main|me\\b)?\\s*(?:message\\s+)?(?:bhejo|karo|send karo)?$").find(raw)
         if (hindiSendMatch != null) {
             val target = cleanTargetName(hindiSendMatch.groupValues[1])
             if (target.isNotBlank()) {
                 return LocalIntent.WhatsAppMessage(target = target, body = "", rawCommand = raw)
             }
+        }
+
+        // Verb at end: "Ramzan ko WhatsApp pe kal milte hain bhejo" / "Rahul ko WhatsApp pe hello bhejo"
+        val verbAtEndPattern = Regex("(?i)^(.+?)\\s+ko\\s+whats\\s*app\\s*(?:par|pe|main|me\\b)?\\s*(?:message\\s+)?(.+?)\\s+(bhejo|bhej do|send karo|likho|likh do)$")
+        val verbAtEndMatch = verbAtEndPattern.find(raw)
+        if (verbAtEndMatch != null) {
+            val target = cleanTargetName(verbAtEndMatch.groupValues[1])
+            val message = verbAtEndMatch.groupValues[2].trim()
+            if (message.isNotBlank() && !message.equals("message", ignoreCase = true)) {
+                return LocalIntent.WhatsAppMessage(target = target, body = message, rawCommand = raw)
+            }
+        }
+
+        // Verb first: "Ramzan ko WhatsApp pe bol kal milte hain" / "Rahul ko whatsapp par bolo main late ho jaunga"
+        val boloPattern = Regex("(?i)^(.+?)\\s+ko\\s+whats\\s*app\\s*(?:par|pe|main|me\\b)?\\s*(bolo|bol|bhejo|likho|send karo|kaho|likh do|bhej do)\\s+(.+)$")
+        val boloMatch = boloPattern.find(raw)
+        if (boloMatch != null) {
+            val target = cleanTargetName(boloMatch.groupValues[1])
+            val message = boloMatch.groupValues[3].trim()
+            return LocalIntent.WhatsAppMessage(target = target, body = message, rawCommand = raw)
         }
 
         // "Rahul ka whatsapp chat kholo" / "Open Rahul whatsapp chat"
@@ -780,22 +825,64 @@ object RexyyCommandRouter {
     }
 
     private fun parseSmsCommand(raw: String, lower: String): LocalIntent.SendSms? {
-        val isSms = lower.startsWith("send sms ") ||
-                lower.startsWith("send message ") ||
-                lower.contains("sms bhejo") ||
-                (lower.contains("ko message bhejo") && !lower.contains("whatsapp"))
+        if (!lower.contains("message") && !lower.contains("sms") && !lower.contains("sandesh")) {
+            return null
+        }
+        if (lower.contains("whatsapp") || lower.contains("whats app")) return null
 
-        if (!isSms) return null
-
+        // 1. Colon syntax: "Send SMS to Rahul: kal milte hain" or "Rahul ko message bhejo: kal milte hain"
         val colonSplit = raw.split(":")
         if (colonSplit.size >= 2) {
-            val target = colonSplit[0].replace("(?i)(send|sms|message|bhejo|ko|to)".toRegex(), "").trim()
+            val header = colonSplit[0].trim()
             val body = colonSplit.subList(1, colonSplit.size).joinToString(":").trim()
+            val target = cleanTargetName(header.replace("(?i)^(send|sms|message|bhejo|ko|to)\\s+".toRegex(), ""))
             return LocalIntent.SendSms(target = target, body = body, rawCommand = raw)
         }
 
-        val target = raw.replace("(?i)(send|sms|message|bhejo|ko|to)".toRegex(), "").trim()
-        return LocalIntent.SendSms(target = target.ifBlank { "Contact" }, body = "", rawCommand = raw)
+        // 2. "Rahul ko message karo kal milte hain" / "Rahul ko SMS bhejo kal milte hain"
+        val verbFirstPattern = Regex("(?i)^(.+?)\\s+ko\\s+(message|sms|sandesh)\\s*(karo|bhejo|bhej do|send karo|likho|likh do)\\s+(.+)$")
+        val verbFirstMatch = verbFirstPattern.find(raw)
+        if (verbFirstMatch != null) {
+            val target = cleanTargetName(verbFirstMatch.groupValues[1])
+            val body = verbFirstMatch.groupValues[4].trim()
+            return LocalIntent.SendSms(target = target, body = body, rawCommand = raw)
+        }
+
+        // 3. "Rahul ko kal milte hain message karo" / "Rahul ko kal milte hain SMS bhejo"
+        val verbEndPattern = Regex("(?i)^(.+?)\\s+ko\\s+(.+?)\\s+(message|sms|sandesh)\\s*(karo|bhejo|bhej do|send karo)$")
+        val verbEndMatch = verbEndPattern.find(raw)
+        if (verbEndMatch != null) {
+            val target = cleanTargetName(verbEndMatch.groupValues[1])
+            val body = verbEndMatch.groupValues[2].trim()
+            return LocalIntent.SendSms(target = target, body = body, rawCommand = raw)
+        }
+
+        // 4. English "send message to Rahul that kal milte hain" / "send sms to Rahul saying kal milte hain"
+        val engSendPattern = Regex("(?i)^send\\s+(sms|message)\\s+(to\\s+)?(.+?)\\s+(that|saying)\\s+(.+)$")
+        val engSendMatch = engSendPattern.find(raw)
+        if (engSendMatch != null) {
+            val target = cleanTargetName(engSendMatch.groupValues[3])
+            val body = engSendMatch.groupValues[5].trim()
+            return LocalIntent.SendSms(target = target, body = body, rawCommand = raw)
+        }
+
+        // 5. Empty body: "Rahul ko message karo" / "Rahul ko SMS bhejo"
+        val emptyBodyPattern = Regex("(?i)^(.+?)\\s+ko\\s+(message|sms|sandesh)\\s*(karo|bhejo|bhej do|send karo)?$")
+        val emptyBodyMatch = emptyBodyPattern.find(raw)
+        if (emptyBodyMatch != null) {
+            val target = cleanTargetName(emptyBodyMatch.groupValues[1])
+            return LocalIntent.SendSms(target = target, body = "", rawCommand = raw)
+        }
+
+        // 6. English empty body: "send message to Rahul" / "send sms to Rahul"
+        val engEmptyPattern = Regex("(?i)^send\\s+(sms|message)\\s+(to\\s+)?(.+)$")
+        val engEmptyMatch = engEmptyPattern.find(raw)
+        if (engEmptyMatch != null) {
+            val target = cleanTargetName(engEmptyMatch.groupValues[3])
+            return LocalIntent.SendSms(target = target, body = "", rawCommand = raw)
+        }
+
+        return null
     }
 
     private fun parseOpenAppCommand(raw: String, lower: String): LocalIntent.OpenApp? {

@@ -47,11 +47,17 @@ class RexyyNotificationListenerService : NotificationListenerService() {
     override fun onListenerConnected() {
         super.onListenerConnected()
         _isListenerConnected.value = true
+        com.rexyy.app.telecom.Phase7DiagnosticManager.updateNotificationState(
+            com.rexyy.app.telecom.NotificationAccessStatus.ACCESS_ACTIVE
+        )
     }
 
     override fun onListenerDisconnected() {
         super.onListenerDisconnected()
         _isListenerConnected.value = false
+        com.rexyy.app.telecom.Phase7DiagnosticManager.updateNotificationState(
+            com.rexyy.app.telecom.NotificationAccessStatus.ACCESS_INACTIVE
+        )
     }
 
     override fun onNotificationPosted(sbn: StatusBarNotification?) {
@@ -109,6 +115,13 @@ class RexyyNotificationListenerService : NotificationListenerService() {
         currentList.add(0, captured)
         if (currentList.size > 50) currentList.removeAt(currentList.lastIndex)
         _recentNotifications.value = currentList
+
+        // Synchronize with Phase 7 Diagnostics (masking full text for privacy)
+        com.rexyy.app.telecom.Phase7DiagnosticManager.updateNotificationState(
+            status = com.rexyy.app.telecom.NotificationAccessStatus.ACCESS_ACTIVE,
+            source = appName,
+            event = "Notification from $appName: ${title.take(30)}"
+        )
 
         // Announce notification if enabled in user settings
         val storage = SecureStorage(this)
@@ -169,6 +182,14 @@ class RexyyNotificationListenerService : NotificationListenerService() {
         fun isNotificationAccessEnabled(context: Context): Boolean {
             val enabledListeners = NotificationManagerCompat.getEnabledListenerPackages(context)
             return enabledListeners.contains(context.packageName)
+        }
+
+        fun getNotificationAccessStatus(context: Context): com.rexyy.app.telecom.NotificationAccessStatus {
+            return if (isNotificationAccessEnabled(context)) {
+                com.rexyy.app.telecom.NotificationAccessStatus.ACCESS_ACTIVE
+            } else {
+                com.rexyy.app.telecom.NotificationAccessStatus.ACCESS_INACTIVE
+            }
         }
 
         fun openNotificationAccessSettings(context: Context) {

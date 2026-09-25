@@ -129,6 +129,8 @@ sealed class LocalIntent(
     // Reminders & Calendar
     data class OpenCalendar(override val rawCommand: String) : LocalIntent(rawCommand, "OpenCalendar", emptyMap())
     data class SetReminder(val title: String, override val rawCommand: String) : LocalIntent(rawCommand, "SetReminder", mapOf("title" to title))
+    data class ReadNotifications(override val rawCommand: String) : LocalIntent(rawCommand, "ReadNotifications", emptyMap())
+    data class CheckCharging(override val rawCommand: String) : LocalIntent(rawCommand, "CheckCharging", emptyMap())
 
     // Accessibility Actions
     data class AccessibilityAction(
@@ -189,6 +191,8 @@ sealed class LocalIntent(
             is WebSearch -> VoiceCommand.GoogleSearch(query = query, rawInput = rawCommand)
             is OpenCalendar -> VoiceCommand.OpenCalendar(rawInput = rawCommand)
             is SetReminder -> VoiceCommand.SetReminder(title = title, rawInput = rawCommand)
+            is ReadNotifications -> VoiceCommand.ReadNotifications(rawInput = rawCommand)
+            is CheckCharging -> VoiceCommand.CheckCharging(rawInput = rawCommand)
             is AccessibilityAction -> VoiceCommand.AccessibilityAction(actionType = actionType, argument = argument, rawInput = rawCommand)
             is MultiStepTask -> VoiceCommand.MultiStepTask(steps = steps.map { it.toVoiceCommand() }, description = description, rawInput = rawCommand)
             is FallbackToAi -> VoiceCommand.AiChat(prompt = prompt, providerOverride = providerOverride)

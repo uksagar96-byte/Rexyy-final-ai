@@ -25,7 +25,11 @@ import com.rexyy.app.router.CommandDiagnosticLogger
 import com.rexyy.app.telecom.CallActionController
 import com.rexyy.app.telecom.CallStateManager
 import com.rexyy.app.telecom.CallerIdentityResolver
+import com.rexyy.app.telecom.SmsActionController
+import com.rexyy.app.telecom.SmsActionResult
 import com.rexyy.app.telecom.TelecomActionResult
+import com.rexyy.app.notifications.RexyyNotificationListenerService
+import com.rexyy.app.device.ChargingMonitor
 import com.rexyy.app.utils.RexyyLanguageManager
 import com.rexyy.app.whatsapp.WhatsAppActionManager
 import com.rexyy.app.whatsapp.WhatsAppActionResult
@@ -81,6 +85,8 @@ object VoiceCommandExecutor {
                 is VoiceCommand.GoogleSearch -> executeGoogleSearch(command.query, context)
                 is VoiceCommand.SendMessage -> executeSendMessage(command, context)
                 is VoiceCommand.SetReminder -> executeSetReminder(command.title, context)
+                is VoiceCommand.ReadNotifications -> executeReadNotifications(context)
+                is VoiceCommand.CheckCharging -> executeCheckCharging(context)
                 is VoiceCommand.AccessibilityAction -> executeAccessibilityAction(command, context)
                 is VoiceCommand.MultiStepTask -> executeMultiStepTask(command, context)
                 is VoiceCommand.AiChat -> VoiceCommandResult.ForwardToAi(command.prompt, command.providerOverride)
@@ -134,6 +140,8 @@ object VoiceCommandExecutor {
             is VoiceCommand.MultiStepTask -> command.rawInput
             is VoiceCommand.AccessibilityAction -> command.rawInput
             is VoiceCommand.SetReminder -> command.rawInput
+            is VoiceCommand.ReadNotifications -> command.rawInput
+            is VoiceCommand.CheckCharging -> command.rawInput
             is VoiceCommand.AiChat -> command.prompt
         }
 
@@ -280,7 +288,7 @@ object VoiceCommandExecutor {
         }
     }
 
-    private fun executeWhatsAppMessage(cmd: VoiceCommand.WhatsAppMessage, context: Context): VoiceCommandResult {
+    private suspend fun executeWhatsAppMessage(cmd: VoiceCommand.WhatsAppMessage, context: Context): VoiceCommandResult {
         val wa = WhatsAppActionManager(context)
         if (cmd.body.isBlank()) {
             return VoiceCommandResult.CollectMessageInput(
@@ -291,32 +299,29 @@ object VoiceCommandExecutor {
         }
 
         if (!cmd.confirmedSend) {
-            val prep = wa.prepareMessage(cmd.target, cmd.body)
-            return when (prep) {
-                is WhatsAppActionResult.NeedsMessageBody -> {
-                    VoiceCommandResult.CollectMessageInput(
-                        targetName = prep.targetName,
-                        isWhatsApp = true,
-                        prompt = prep.prompt
-                    )
-                }
-                is WhatsAppActionResult.RequiresConfirmation -> {
-                    VoiceCommandResult.RequiresConfirmation(
-                        prompt = prep.confirmationPrompt,
-                        commandToExecute = cmd.copy(confirmedSend = true)
-                    )
-                }
-                is WhatsAppActionResult.NotInstalled -> VoiceCommandResult.Handled(prep.message)
-                else -> VoiceCommandResult.Error("WhatsApp message prepare nahi ho paya.")
+            val prompt = "${cmd.target} ko WhatsApp par ye message bheju?\n\"${cmd.body}\""
+            return VoiceCommandResult.RequiresConfirmation(
+                prompt = prompt,
+                commandToExecute = cmd.copy(confirmedSend = true)
+            )
+        }
+
+        return when (val sent = wa.executeSendWithAccessibility(cmd.target, cmd.body)) {
+            is WhatsAppActionResult.Success -> VoiceCommandResult.Handled(sent.message)
+            is WhatsAppActionResult.NotInstalled -> VoiceCommandResult.Handled(sent.message)
+            is WhatsAppActionResult.MultipleMatches -> {
+                val names = sent.matches.take(3).joinToString { it.name }
+                VoiceCommandResult.Handled("${sent.matches.size} contacts mile: $names. Kisko WhatsApp bhejna hai?")
             }
-        } else {
-            val resolvedPhone = CallerIdentityResolver.findPhoneNumberByName(context, cmd.target)
-            return when (val sent = wa.executeSendMessage(cmd.target, resolvedPhone, cmd.body)) {
-                is WhatsAppActionResult.Success -> VoiceCommandResult.Handled(sent.message)
-                is WhatsAppActionResult.NotInstalled -> VoiceCommandResult.Handled(sent.message)
-                is WhatsAppActionResult.Failure -> VoiceCommandResult.Error(sent.error)
-                else -> VoiceCommandResult.Error("WhatsApp message send nahi hua.")
+            is WhatsAppActionResult.NeedsMessageBody -> {
+                VoiceCommandResult.CollectMessageInput(
+                    targetName = sent.targetName,
+                    isWhatsApp = true,
+                    prompt = sent.prompt
+                )
             }
+            is WhatsAppActionResult.Failure -> VoiceCommandResult.Error(sent.error)
+            else -> VoiceCommandResult.Error("WhatsApp message send nahi hua.")
         }
     }
 
@@ -332,15 +337,42 @@ object VoiceCommandExecutor {
 
     private fun executeCallContact(cmd: VoiceCommand.CallContact, context: Context): VoiceCommandResult {
         if (!cmd.confirmedDirectCall) {
-            return VoiceCommandResult.RequiresConfirmation(
-                prompt = "${cmd.target} ko call karu?",
-                commandToExecute = cmd.copy(confirmedDirectCall = true)
-            )
+            val contactRes = CallerIdentityResolver.resolveContactForAction(context, cmd.target)
+            return when (contactRes) {
+                is CallerIdentityResolver.ContactActionResult.Multiple -> {
+                    val names = contactRes.matches.take(3).joinToString { it.name }
+                    VoiceCommandResult.Handled("${contactRes.matches.size} contacts mile: $names. Kise call lagani hai?")
+                }
+                is CallerIdentityResolver.ContactActionResult.NotFound -> {
+                    val digits = cmd.target.filter { it.isDigit() || it == '+' }
+                    if (digits.length >= 3) {
+                        VoiceCommandResult.RequiresConfirmation(
+                            prompt = "${cmd.target} ko call karu?",
+                            commandToExecute = cmd.copy(confirmedDirectCall = true)
+                        )
+                    } else {
+                        VoiceCommandResult.Error("Contact \"${cmd.target}\" contacts mein nahi mila.")
+                    }
+                }
+                is CallerIdentityResolver.ContactActionResult.PermissionNeeded -> {
+                    VoiceCommandResult.Error("Contacts permission required hai. Settings mein Contacts permission allow karein.")
+                }
+                is CallerIdentityResolver.ContactActionResult.Resolved -> {
+                    VoiceCommandResult.RequiresConfirmation(
+                        prompt = "${contactRes.contact.name} ko call karu?",
+                        commandToExecute = cmd.copy(target = contactRes.contact.name, confirmedDirectCall = true)
+                    )
+                }
+            }
         }
 
         val controller = CallActionController(context)
         return when (val res = controller.callContact(cmd.target, confirmedDirectCall = true)) {
             is TelecomActionResult.Success -> VoiceCommandResult.Handled(res.message)
+            is TelecomActionResult.MultipleMatches -> {
+                val names = res.matches.take(3).joinToString { it.name }
+                VoiceCommandResult.Handled("${res.matches.size} contacts mile: $names. Kise call lagani hai?")
+            }
             is TelecomActionResult.PermissionNeeded -> VoiceCommandResult.Error(res.message)
             is TelecomActionResult.Unsupported -> VoiceCommandResult.Handled(res.reason)
             is TelecomActionResult.Failure -> VoiceCommandResult.Error(res.error)
@@ -361,6 +393,7 @@ object VoiceCommandExecutor {
             is TelecomActionResult.PermissionNeeded -> VoiceCommandResult.Error(res.message)
             is TelecomActionResult.Unsupported -> VoiceCommandResult.Handled(res.reason)
             is TelecomActionResult.Failure -> VoiceCommandResult.Error(res.error)
+            else -> VoiceCommandResult.Error("Unable to answer call.")
         }
     }
 
@@ -371,6 +404,7 @@ object VoiceCommandExecutor {
             is TelecomActionResult.PermissionNeeded -> VoiceCommandResult.Error(res.message)
             is TelecomActionResult.Unsupported -> VoiceCommandResult.Handled(res.reason)
             is TelecomActionResult.Failure -> VoiceCommandResult.Error(res.error)
+            else -> VoiceCommandResult.Error("Unable to reject call.")
         }
     }
 
@@ -664,17 +698,51 @@ object VoiceCommandExecutor {
             )
         }
 
-        val resolvedPhone = CallerIdentityResolver.findPhoneNumberByName(context, cmd.target) ?: cmd.target
-        val sendIntent = Intent(Intent.ACTION_SENDTO).apply {
-            data = Uri.parse("smsto:${Uri.encode(resolvedPhone)}")
-            putExtra("sms_body", cmd.body)
-            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        val controller = SmsActionController(context)
+        return when (val res = controller.sendSms(cmd.target, cmd.body, confirmedSend = true)) {
+            is SmsActionResult.Success -> VoiceCommandResult.Handled(res.message)
+            is SmsActionResult.MultipleMatches -> {
+                val names = res.matches.take(3).joinToString { it.name }
+                VoiceCommandResult.Handled("${res.matches.size} contacts mile: $names. Kisko SMS bhejna hai?")
+            }
+            is SmsActionResult.NeedsMessageBody -> {
+                VoiceCommandResult.CollectMessageInput(
+                    targetName = res.target,
+                    isWhatsApp = false,
+                    prompt = res.prompt
+                )
+            }
+            is SmsActionResult.PermissionNeeded -> VoiceCommandResult.Error(res.message)
+            is SmsActionResult.Failure -> VoiceCommandResult.Error(res.error)
         }
-        return try {
-            context.startActivity(sendIntent)
-            VoiceCommandResult.Handled("${cmd.target} ke liye SMS composer open ho gaya hai.")
-        } catch (e: Exception) {
-            VoiceCommandResult.Error("SMS composer open nahi ho paya: ${e.localizedMessage}")
+    }
+
+    private fun executeReadNotifications(context: Context): VoiceCommandResult {
+        if (!RexyyNotificationListenerService.isNotificationAccessEnabled(context)) {
+            RexyyNotificationListenerService.openNotificationAccessSettings(context)
+            return VoiceCommandResult.Handled("Notification access required hai. Settings open kar di gayi hai, kripya REXXY ko allow karein.")
+        }
+
+        val notifs = RexyyNotificationListenerService.recentNotifications.value
+        if (notifs.isEmpty()) {
+            return VoiceCommandResult.Handled("Abhi koi naye notifications nahi hain.")
+        }
+
+        val count = notifs.size
+        val top = notifs.take(3).joinToString("; ") { "${it.appName} se: ${it.title.ifBlank { it.text.take(30) }}" }
+        return VoiceCommandResult.Handled("Aapke paas $count notifications hain. Recent: $top")
+    }
+
+    private fun executeCheckCharging(context: Context): VoiceCommandResult {
+        val isCharging = ChargingMonitor.isCharging.value
+        val bm = context.getSystemService(Context.BATTERY_SERVICE) as? BatteryManager
+        val pct = bm?.getIntProperty(BatteryManager.BATTERY_PROPERTY_CAPACITY) ?: -1
+
+        val pctStr = if (pct >= 0) " Battery $pct% hai." else ""
+        return if (isCharging) {
+            VoiceCommandResult.Handled("Charger connected hai aur charging ho rahi hai.$pctStr")
+        } else {
+            VoiceCommandResult.Handled("Phone charger se connect nahi hai.$pctStr")
         }
     }
 

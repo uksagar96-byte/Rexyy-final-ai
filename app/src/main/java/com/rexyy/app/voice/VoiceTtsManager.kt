@@ -19,6 +19,7 @@ class VoiceTtsManager(
     private var isInitialized: Boolean = false
     private var pendingLanguage: String = SecureStorage.VOICE_LANG_DEFAULT
     private var currentUtteranceId: String? = null
+    private var onUtteranceDone: (() -> Unit)? = null
 
     init {
         try {
@@ -51,6 +52,9 @@ class VoiceTtsManager(
                     if (currentUtteranceId == utteranceId) {
                         currentUtteranceId = null
                         onSpeakingStateChanged(false)
+                        val cb = onUtteranceDone
+                        onUtteranceDone = null
+                        cb?.invoke()
                     }
                 }
             }
@@ -61,6 +65,9 @@ class VoiceTtsManager(
                     if (currentUtteranceId == utteranceId) {
                         currentUtteranceId = null
                         onSpeakingStateChanged(false)
+                        val cb = onUtteranceDone
+                        onUtteranceDone = null
+                        cb?.invoke()
                     }
                 }
             }
@@ -70,6 +77,9 @@ class VoiceTtsManager(
                     if (currentUtteranceId == utteranceId) {
                         currentUtteranceId = null
                         onSpeakingStateChanged(false)
+                        val cb = onUtteranceDone
+                        onUtteranceDone = null
+                        cb?.invoke()
                     }
                 }
             }
@@ -98,18 +108,32 @@ class VoiceTtsManager(
         }
     }
 
-    fun speak(text: String, languageSetting: String = SecureStorage.VOICE_LANG_DEFAULT) {
-        if (!isInitialized || textToSpeech == null) return
-        if (text.isBlank()) return
+    fun speak(
+        text: String,
+        languageSetting: String = SecureStorage.VOICE_LANG_DEFAULT,
+        onDone: (() -> Unit)? = null
+    ) {
+        if (!isInitialized || textToSpeech == null) {
+            onDone?.invoke()
+            return
+        }
+        if (text.isBlank()) {
+            onDone?.invoke()
+            return
+        }
 
         applyLanguage(languageSetting)
 
         // Clean markdown and formatting for natural speech
         val cleanedText = prepareSpeechText(text)
-        if (cleanedText.isBlank()) return
+        if (cleanedText.isBlank()) {
+            onDone?.invoke()
+            return
+        }
 
         val utteranceId = UUID.randomUUID().toString()
         currentUtteranceId = utteranceId
+        onUtteranceDone = onDone
 
         try {
             textToSpeech?.speak(
@@ -120,6 +144,9 @@ class VoiceTtsManager(
             )
         } catch (_: Exception) {
             onSpeakingStateChanged(false)
+            val cb = onUtteranceDone
+            onUtteranceDone = null
+            cb?.invoke()
         }
     }
 
@@ -129,8 +156,11 @@ class VoiceTtsManager(
         } catch (_: Exception) {
         } finally {
             currentUtteranceId = null
+            val cb = onUtteranceDone
+            onUtteranceDone = null
             mainHandler.post {
                 onSpeakingStateChanged(false)
+                cb?.invoke()
             }
         }
     }

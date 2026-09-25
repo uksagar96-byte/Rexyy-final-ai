@@ -1,6 +1,5 @@
 package com.rexyy.app.service
 
-import android.Manifest
 import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
@@ -8,59 +7,38 @@ import android.app.PendingIntent
 import android.app.Service
 import android.content.Context
 import android.content.Intent
-import android.content.pm.PackageManager
 import android.content.pm.ServiceInfo
 import android.media.AudioManager
 import android.media.ToneGenerator
 import android.os.Build
-import android.os.Bundle
 import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
-import android.speech.RecognitionListener
-import android.speech.RecognizerIntent
-import android.speech.SpeechRecognizer
 import androidx.core.app.NotificationCompat
 import androidx.core.app.ServiceCompat
-import androidx.core.content.ContextCompat
 import com.rexyy.app.MainActivity
 import com.rexyy.app.R
-import com.rexyy.app.data.local.SecureStorage
 import com.rexyy.app.router.RexyyCommandRouter
-import com.rexyy.app.voice.VoiceCommand
 import com.rexyy.app.voice.VoiceCommandExecutor
 import com.rexyy.app.voice.VoiceCommandResult
 import com.rexyy.app.voice.VoiceTtsManager
+import com.rexyy.app.voice.WakeWordDetector
+import com.rexyy.app.voice.WakeWordListener
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
-import java.util.Locale
-
-enum class AssistantBackgroundState {
-    INACTIVE,
-    IDLE,
-    BACKGROUND_ACTIVE,
-    WAKE_DETECTED,
-    LISTENING,
-    UNDERSTANDING,
-    EXECUTING,
-    SPEAKING,
-    ERROR
-}
 
 object RexyyAssistantServiceState {
     private val _serviceRunning = MutableStateFlow(false)
     val serviceRunning: StateFlow<Boolean> = _serviceRunning.asStateFlow()
 
-    private val _currentState = MutableStateFlow(AssistantBackgroundState.INACTIVE)
-    val currentState: StateFlow<AssistantBackgroundState> = _currentState.asStateFlow()
+    private val _currentState = MutableStateFlow(WakeWordState.WAKE_STANDBY)
+    val currentState: StateFlow<WakeWordState> = _currentState.asStateFlow()
 
     private val _lastRecognizedCommand = MutableStateFlow("")
     val lastRecognizedCommand: StateFlow<String> = _lastRecognizedCommand.asStateFlow()
@@ -70,10 +48,12 @@ object RexyyAssistantServiceState {
 
     fun updateRunning(running: Boolean) {
         _serviceRunning.value = running
-        if (!running) _currentState.value = AssistantBackgroundState.INACTIVE
+        if (!running) {
+            _currentState.value = WakeWordState.WAKE_STANDBY
+        }
     }
 
-    fun updateState(state: AssistantBackgroundState) {
+    fun updateState(state: WakeWordState) {
         _currentState.value = state
     }
 
@@ -86,18 +66,16 @@ object RexyyAssistantServiceState {
     }
 }
 
-class RexyyBackgroundAssistantService : Service() {
+class RexyyBackgroundAssistantService : Service(), WakeWordListener {
 
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
     private val mainHandler = Handler(Looper.getMainLooper())
 
-    private var speechRecognizer: SpeechRecognizer? = null
+    private var wakeWordDetector: WakeWordDetector? = null
     private var ttsManager: VoiceTtsManager? = null
     private var toneGenerator: ToneGenerator? = null
 
-    private var isContinuousListening = false
     private var isDestroyed = false
-    private var restartJob: Job? = null
 
     companion object {
         const val CHANNEL_ID = "rexyy_background_assistant_channel"
@@ -111,6 +89,7 @@ class RexyyBackgroundAssistantService : Service() {
     override fun onCreate() {
         super.onCreate()
         createNotificationChannel()
+
         toneGenerator = try {
             ToneGenerator(AudioManager.STREAM_NOTIFICATION, 80)
         } catch (_: Exception) {
@@ -119,13 +98,18 @@ class RexyyBackgroundAssistantService : Service() {
 
         ttsManager = VoiceTtsManager(this) { isSpeaking ->
             if (isSpeaking) {
-                RexyyAssistantServiceState.updateState(AssistantBackgroundState.SPEAKING)
+                wakeWordDetector?.pauseForSpeaking()
+                syncState(WakeWordState.RETURNING_TO_STANDBY)
             } else {
-                if (isContinuousListening && !isDestroyed) {
-                    RexyyAssistantServiceState.updateState(AssistantBackgroundState.BACKGROUND_ACTIVE)
-                    scheduleNextListening(400L)
+                if (!isDestroyed && RexyyAssistantServiceState.serviceRunning.value) {
+                    syncState(WakeWordState.WAKE_STANDBY)
+                    wakeWordDetector?.resumeAfterSpeaking()
                 }
             }
+        }
+
+        wakeWordDetector = WakeWordDetector.create(this).apply {
+            setListener(this@RexyyBackgroundAssistantService)
         }
     }
 
@@ -137,10 +121,9 @@ class RexyyBackgroundAssistantService : Service() {
 
         startForegroundWithMicrophone()
         RexyyAssistantServiceState.updateRunning(true)
-        RexyyAssistantServiceState.updateState(AssistantBackgroundState.BACKGROUND_ACTIVE)
+        syncState(WakeWordState.WAKE_STANDBY)
 
-        isContinuousListening = true
-        startSpeechListening()
+        wakeWordDetector?.startStandby()
 
         return START_STICKY
     }
@@ -166,7 +149,7 @@ class RexyyBackgroundAssistantService : Service() {
                 "REXYY Background Assistant",
                 NotificationManager.IMPORTANCE_LOW
             ).apply {
-                description = "Keeps REXYY voice assistant listening for wake-word in background"
+                description = "Keeps REXXY voice assistant listening for wake-word in background"
                 setShowBadge(false)
             }
             val manager = getSystemService(NotificationManager::class.java)
@@ -211,145 +194,9 @@ class RexyyBackgroundAssistantService : Service() {
         manager?.notify(NOTIFICATION_ID, buildForegroundNotification(title, content))
     }
 
-    private fun startSpeechListening() {
-        if (isDestroyed || !isContinuousListening) return
-        if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
-            RexyyAssistantServiceState.updateState(AssistantBackgroundState.ERROR)
-            return
-        }
-
-        mainHandler.post {
-            try {
-                if (speechRecognizer == null) {
-                    speechRecognizer = SpeechRecognizer.createSpeechRecognizer(this)
-                }
-                speechRecognizer?.setRecognitionListener(createListener())
-
-                val storage = SecureStorage(this)
-                val lang = storage.getVoiceLanguage()
-                val recognizerIntent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
-                    putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
-                    putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
-                    putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 3)
-
-                    when (lang) {
-                        SecureStorage.VOICE_LANG_HI -> {
-                            putExtra(RecognizerIntent.EXTRA_LANGUAGE, "hi-IN")
-                            putExtra("android.speech.extra.EXTRA_ADDITIONAL_LANGUAGES", arrayOf("en-IN", "en-US"))
-                        }
-                        SecureStorage.VOICE_LANG_EN -> {
-                            putExtra(RecognizerIntent.EXTRA_LANGUAGE, "en-US")
-                            putExtra("android.speech.extra.EXTRA_ADDITIONAL_LANGUAGES", arrayOf("en-IN"))
-                        }
-                        else -> {
-                            putExtra(RecognizerIntent.EXTRA_LANGUAGE, Locale.getDefault().toLanguageTag())
-                            putExtra("android.speech.extra.EXTRA_ADDITIONAL_LANGUAGES", arrayOf("en-US", "hi-IN"))
-                        }
-                    }
-                }
-
-                speechRecognizer?.startListening(recognizerIntent)
-            } catch (e: Exception) {
-                scheduleNextListening(1000L)
-            }
-        }
-    }
-
-    private fun createListener(): RecognitionListener {
-        return object : RecognitionListener {
-            override fun onReadyForSpeech(params: Bundle?) {}
-            override fun onBeginningOfSpeech() {}
-            override fun onRmsChanged(rmsdB: Float) {}
-            override fun onBufferReceived(buffer: ByteArray?) {}
-            override fun onEndOfSpeech() {}
-
-            override fun onError(error: Int) {
-                // If recognizer had timeout or no match, gracefully restart listening
-                if (isContinuousListening && !isDestroyed) {
-                    val delayMs = when (error) {
-                        SpeechRecognizer.ERROR_RECOGNIZER_BUSY -> 800L
-                        SpeechRecognizer.ERROR_NETWORK -> 1500L
-                        else -> 400L
-                    }
-                    scheduleNextListening(delayMs)
-                }
-            }
-
-            override fun onResults(results: Bundle?) {
-                val matches = results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
-                val text = matches?.firstOrNull()?.trim() ?: ""
-                if (text.isNotBlank()) {
-                    handleRecognizedSpeech(text)
-                } else if (isContinuousListening && !isDestroyed) {
-                    scheduleNextListening(300L)
-                }
-            }
-
-            override fun onPartialResults(partialResults: Bundle?) {
-                val matches = partialResults?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
-                val partialText = matches?.firstOrNull()?.trim()?.lowercase() ?: ""
-                if (isInterruptPhrase(partialText)) {
-                    stopSpeakingAndCancel()
-                }
-            }
-
-            override fun onEvent(eventType: Int, params: Bundle?) {}
-        }
-    }
-
-    private fun isInterruptPhrase(text: String): Boolean {
-        return text == "stop" || text == "ruko" || text == "ruk ja" || text == "bas" ||
-                text == "cancel" || text == "chup" || text == "chup raho" || text == "shant"
-    }
-
-    private fun stopSpeakingAndCancel() {
-        ttsManager?.stop()
-        speechRecognizer?.cancel()
-        RexyyAssistantServiceState.updateFeedback("Stopped.")
-        RexyyAssistantServiceState.updateState(AssistantBackgroundState.BACKGROUND_ACTIVE)
-        scheduleNextListening(500L)
-    }
-
-    private fun handleRecognizedSpeech(rawSpeech: String) {
-        val lower = rawSpeech.lowercase().trim()
-
-        // 1. Check for immediate stop interrupts
-        if (isInterruptPhrase(lower)) {
-            stopSpeakingAndCancel()
-            return
-        }
-
-        // 2. Check current state
-        val currentState = RexyyAssistantServiceState.currentState.value
-
-        // Check if wake word is present
-        val isWakeWord = lower.startsWith("hello rex") || lower.startsWith("hey rex") ||
-                lower.startsWith("hello rexyy") || lower.startsWith("hey rexyy") ||
-                lower.startsWith("ok rex") || lower.startsWith("hi rex") ||
-                lower == "rex" || lower == "rexyy"
-
-        if (isWakeWord || currentState == AssistantBackgroundState.LISTENING) {
-            RexyyAssistantServiceState.updateState(AssistantBackgroundState.WAKE_DETECTED)
-            playCueTone()
-
-            // Check if command is embedded directly with wake word (e.g. "Hello Rex YouTube pe cricket search karo")
-            val strippedCommand = rawSpeech.replace("(?i)^(hello|hey|hi|ok)?\\s*(rex|rexyy)\\s*".toRegex(), "").trim()
-
-            if (strippedCommand.isNotBlank()) {
-                executeCommandFromBackground(strippedCommand)
-            } else {
-                // Wake word alone -> prompt user and enter LISTENING state
-                RexyyAssistantServiceState.updateState(AssistantBackgroundState.LISTENING)
-                updateNotification("REXYY Listening...", "Speak your command now")
-                ttsManager?.speak("Yes, bolo.")
-            }
-        } else {
-            // If in continuous background and not explicit wake word, check if it's a direct command
-            // or loop back to listening
-            if (isContinuousListening && !isDestroyed) {
-                scheduleNextListening(300L)
-            }
-        }
+    private fun syncState(state: WakeWordState) {
+        RexyyAssistantServiceState.updateState(state)
+        wakeWordDetector?.transitionState(state)
     }
 
     private fun playCueTone() {
@@ -358,42 +205,81 @@ class RexyyBackgroundAssistantService : Service() {
         } catch (_: Exception) {}
     }
 
+    // WakeWordListener implementation
+
+    override fun onWakeWordDetected(phrase: String, inlineCommand: String?) {
+        playCueTone()
+        syncState(WakeWordState.WAKE_DETECTED)
+
+        if (!inlineCommand.isNullOrBlank()) {
+            // Wake word and command spoken in one breath: "Hello Rex Rahul ko call karo"
+            executeCommandFromBackground(inlineCommand)
+        } else {
+            // Wake word alone: prompt user and transition to COMMAND_LISTENING
+            updateNotification("REXYY Listening...", "Speak your command now")
+            ttsManager?.speak("Yes, bolo.") {
+                // When "Yes, bolo." finishes speaking, enter full command listening
+                mainHandler.post {
+                    if (!isDestroyed && RexyyAssistantServiceState.serviceRunning.value) {
+                        syncState(WakeWordState.COMMAND_LISTENING)
+                        wakeWordDetector?.startCommandListening()
+                    }
+                }
+            }
+        }
+    }
+
+    override fun onCommandRecognized(command: String) {
+        executeCommandFromBackground(command)
+    }
+
+    override fun onCommandTimeout() {
+        syncState(WakeWordState.RETURNING_TO_STANDBY)
+        updateNotification("REXYY Active", "Listening for \"Hello Rex\"...")
+        wakeWordDetector?.startStandby()
+    }
+
+    override fun onError(errorCode: Int, message: String) {
+        // Handled with bounded recovery inside WakeWordDetector
+        syncState(WakeWordState.ERROR)
+    }
+
+    override fun onStopInterrupt() {
+        stopSpeakingAndCancel()
+    }
+
+    private fun stopSpeakingAndCancel() {
+        ttsManager?.stop()
+        RexyyAssistantServiceState.updateFeedback("Stopped.")
+        syncState(WakeWordState.RETURNING_TO_STANDBY)
+        updateNotification("REXYY Active", "Listening for \"Hello Rex\"...")
+        wakeWordDetector?.startStandby()
+    }
+
     private fun executeCommandFromBackground(commandText: String) {
         RexyyAssistantServiceState.updateCommand(commandText)
-        RexyyAssistantServiceState.updateState(AssistantBackgroundState.UNDERSTANDING)
+        syncState(WakeWordState.PROCESSING)
         updateNotification("REXYY Processing...", commandText)
 
         serviceScope.launch {
             try {
-                RexyyAssistantServiceState.updateState(AssistantBackgroundState.EXECUTING)
+                syncState(WakeWordState.EXECUTING)
                 val command = RexyyCommandRouter.route(commandText)
                 val result = VoiceCommandExecutor.execute(command, this@RexyyBackgroundAssistantService)
 
-                when (result) {
-                    is VoiceCommandResult.Handled -> {
-                        RexyyAssistantServiceState.updateFeedback(result.replyText)
-                        updateNotification("REXYY Done", result.replyText)
-                        speakFeedbackAndResume(result.replyText)
-                    }
-                    is VoiceCommandResult.Error -> {
-                        RexyyAssistantServiceState.updateFeedback(result.errorMessage)
-                        updateNotification("REXYY", result.errorMessage)
-                        speakFeedbackAndResume(result.errorMessage)
-                    }
-                    is VoiceCommandResult.RequiresConfirmation -> {
-                        RexyyAssistantServiceState.updateFeedback(result.prompt)
-                        speakFeedbackAndResume(result.prompt)
-                    }
-                    is VoiceCommandResult.CollectMessageInput -> {
-                        RexyyAssistantServiceState.updateFeedback(result.prompt)
-                        speakFeedbackAndResume(result.prompt)
-                    }
-                    is VoiceCommandResult.ForwardToAi -> {
-                        val message = "Forwarding query: ${result.prompt}"
-                        RexyyAssistantServiceState.updateFeedback(message)
-                        speakFeedbackAndResume("Sir, ${result.prompt} ke liye AI stream activate kar raha hoon.")
-                    }
+                syncState(WakeWordState.VERIFYING)
+
+                val replyText = when (result) {
+                    is VoiceCommandResult.Handled -> result.replyText
+                    is VoiceCommandResult.Error -> result.errorMessage
+                    is VoiceCommandResult.RequiresConfirmation -> result.prompt
+                    is VoiceCommandResult.CollectMessageInput -> result.prompt
+                    is VoiceCommandResult.ForwardToAi -> "Sir, ${result.prompt} ke liye AI stream activate kar raha hoon."
                 }
+
+                RexyyAssistantServiceState.updateFeedback(replyText)
+                updateNotification("REXYY Done", replyText)
+                speakFeedbackAndResume(replyText)
             } catch (e: Exception) {
                 val err = "Command failed: ${e.localizedMessage ?: "Unknown error"}"
                 RexyyAssistantServiceState.updateFeedback(err)
@@ -403,35 +289,29 @@ class RexyyBackgroundAssistantService : Service() {
     }
 
     private fun speakFeedbackAndResume(text: String) {
-        RexyyAssistantServiceState.updateState(AssistantBackgroundState.SPEAKING)
-        ttsManager?.speak(text)
-    }
-
-    private fun scheduleNextListening(delayMs: Long) {
-        restartJob?.cancel()
-        if (isDestroyed || !isContinuousListening) return
-
-        restartJob = serviceScope.launch {
-            delay(delayMs)
-            if (isContinuousListening && !isDestroyed) {
-                RexyyAssistantServiceState.updateState(AssistantBackgroundState.BACKGROUND_ACTIVE)
-                updateNotification("REXYY Active", "Listening for \"Hello Rex\"...")
-                startSpeechListening()
+        syncState(WakeWordState.RETURNING_TO_STANDBY)
+        wakeWordDetector?.pauseForSpeaking()
+        ttsManager?.speak(text) {
+            mainHandler.post {
+                if (!isDestroyed && RexyyAssistantServiceState.serviceRunning.value) {
+                    syncState(WakeWordState.WAKE_STANDBY)
+                    updateNotification("REXYY Active", "Listening for \"Hello Rex\"...")
+                    wakeWordDetector?.resumeAfterSpeaking()
+                }
             }
         }
     }
 
     override fun onDestroy() {
         isDestroyed = true
-        isContinuousListening = false
-        restartJob?.cancel()
+        RexyyAssistantServiceState.updateRunning(false)
+        syncState(WakeWordState.WAKE_STANDBY)
+
         serviceScope.cancel()
 
-        try {
-            speechRecognizer?.cancel()
-            speechRecognizer?.destroy()
-            speechRecognizer = null
-        } catch (_: Exception) {}
+        wakeWordDetector?.stop()
+        wakeWordDetector?.destroy()
+        wakeWordDetector = null
 
         try {
             ttsManager?.shutdown()
@@ -443,8 +323,6 @@ class RexyyBackgroundAssistantService : Service() {
             toneGenerator = null
         } catch (_: Exception) {}
 
-        RexyyAssistantServiceState.updateRunning(false)
-        RexyyAssistantServiceState.updateState(AssistantBackgroundState.INACTIVE)
         super.onDestroy()
     }
 }
