@@ -137,30 +137,34 @@ object CallerIdentityResolver {
      * Resolves contact query to a structured search result for voice/assistant responses.
      */
     fun resolveContactSummary(context: Context, query: String): ContactSearchResult {
+        val trimmed = query.trim()
+        Phase7DiagnosticManager.updateContactsState(ContactsLookupState.CONTACT_SEARCHING, trimmed, 0)
+
         if (testContacts == null && ContextCompat.checkSelfPermission(context, Manifest.permission.READ_CONTACTS) != PackageManager.PERMISSION_GRANTED) {
-            Phase7DiagnosticManager.updateContactsState(ContactsLookupState.PERMISSION_REQUIRED, query, 0)
+            Phase7DiagnosticManager.updateContactsState(ContactsLookupState.CONTACT_FAILED, trimmed, 0)
             return ContactSearchResult.PermissionNeeded
         }
 
-        val matches = searchContacts(context, query)
+        val matches = searchContacts(context, trimmed)
         val result = when {
             matches.isEmpty() -> {
-                Phase7DiagnosticManager.updateContactsState(ContactsLookupState.NOT_FOUND, query, 0)
-                ContactSearchResult.NotFound(query)
+                Phase7DiagnosticManager.updateContactsState(ContactsLookupState.CONTACT_NOT_FOUND, trimmed, 0)
+                ContactSearchResult.NotFound(trimmed)
             }
             matches.size == 1 -> {
-                Phase7DiagnosticManager.updateContactsState(ContactsLookupState.FOUND, query, 1)
+                Phase7DiagnosticManager.updateContactsState(ContactsLookupState.CONTACT_RESOLVED, trimmed, 1)
                 ContactSearchResult.SingleMatch(matches.first())
             }
             else -> {
-                // If there is an exact case-insensitive match and it's unique
-                val exactMatches = matches.filter { it.name.equals(query.trim(), ignoreCase = true) }
+                // If there is an exact case-insensitive match and it's unique (single phone number)
+                val exactMatches = matches.filter { it.name.equals(trimmed, ignoreCase = true) }
                 if (exactMatches.size == 1) {
-                    Phase7DiagnosticManager.updateContactsState(ContactsLookupState.FOUND, query, 1)
+                    Phase7DiagnosticManager.updateContactsState(ContactsLookupState.CONTACT_RESOLVED, trimmed, 1)
                     ContactSearchResult.SingleMatch(exactMatches.first())
                 } else {
-                    Phase7DiagnosticManager.updateContactsState(ContactsLookupState.MULTIPLE, query, matches.size)
-                    ContactSearchResult.MultipleMatches(query, matches)
+                    // Ambiguous: multiple contacts or multiple phone numbers for the same contact
+                    Phase7DiagnosticManager.updateContactsState(ContactsLookupState.CONTACT_AMBIGUOUS, trimmed, matches.size)
+                    ContactSearchResult.MultipleMatches(trimmed, matches)
                 }
             }
         }
@@ -173,19 +177,35 @@ object CallerIdentityResolver {
      */
     fun resolveContactForAction(context: Context, query: String): ContactActionResult {
         val trimmed = query.trim()
-        if (trimmed.isBlank()) return ContactActionResult.NotFound(query)
+        if (trimmed.isBlank()) {
+            Phase7DiagnosticManager.updateContactsState(ContactsLookupState.CONTACT_NOT_FOUND, query, 0)
+            return ContactActionResult.NotFound(query)
+        }
 
         // If the query is already an explicit phone number with at least 3 digits
         val digitsOnly = trimmed.filter { it.isDigit() || it == '+' }
         if (digitsOnly.length >= 7 && digitsOnly.length == trimmed.replace(" ", "").replace("-", "").length) {
+            Phase7DiagnosticManager.updateContactsState(ContactsLookupState.CONTACT_RESOLVED, trimmed, 1)
             return ContactActionResult.Resolved(ContactMatch(name = trimmed, phoneNumber = trimmed))
         }
 
         return when (val summary = resolveContactSummary(context, trimmed)) {
-            is ContactSearchResult.PermissionNeeded -> ContactActionResult.PermissionNeeded
-            is ContactSearchResult.NotFound -> ContactActionResult.NotFound(trimmed)
-            is ContactSearchResult.SingleMatch -> ContactActionResult.Resolved(summary.contact)
-            is ContactSearchResult.MultipleMatches -> ContactActionResult.Multiple(trimmed, summary.matches)
+            is ContactSearchResult.PermissionNeeded -> {
+                Phase7DiagnosticManager.updateContactsState(ContactsLookupState.CONTACT_FAILED, trimmed, 0)
+                ContactActionResult.PermissionNeeded
+            }
+            is ContactSearchResult.NotFound -> {
+                Phase7DiagnosticManager.updateContactsState(ContactsLookupState.CONTACT_NOT_FOUND, trimmed, 0)
+                ContactActionResult.NotFound(trimmed)
+            }
+            is ContactSearchResult.SingleMatch -> {
+                Phase7DiagnosticManager.updateContactsState(ContactsLookupState.CONTACT_RESOLVED, trimmed, 1)
+                ContactActionResult.Resolved(summary.contact)
+            }
+            is ContactSearchResult.MultipleMatches -> {
+                Phase7DiagnosticManager.updateContactsState(ContactsLookupState.CONTACT_AMBIGUOUS, trimmed, summary.matches.size)
+                ContactActionResult.Multiple(trimmed, summary.matches)
+            }
         }
     }
 }

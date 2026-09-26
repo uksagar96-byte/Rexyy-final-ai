@@ -1,7 +1,11 @@
 package com.rexyy.app.ui
 
 import androidx.activity.compose.BackHandler
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.material3.Surface
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
@@ -9,9 +13,12 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.rexyy.app.network.provider.AiProviderType
+import com.rexyy.app.pill.ui.RexyyDynamicPill
 import com.rexyy.app.ui.chat.ChatScreen
 import com.rexyy.app.ui.chat.ChatViewModel
 import com.rexyy.app.ui.control.ControlCenterScreen
@@ -52,8 +59,9 @@ fun RexyyMainScreen(
         color = RexyyDarkBackground,
         modifier = modifier.fillMaxSize()
     ) {
-        when (currentScreen) {
-            is Screen.Welcome -> {
+        Box(modifier = Modifier.fillMaxSize()) {
+            when (currentScreen) {
+                is Screen.Welcome -> {
                 WelcomeScreen(
                     onStartSetupWizard = {
                         currentScreen = Screen.SetupWizard
@@ -252,5 +260,19 @@ fun RexyyMainScreen(
                 )
             }
         }
+
+        // Real-time Dynamic Pill status surface
+        if (currentScreen !is Screen.Welcome && currentScreen !is Screen.SetupWizard) {
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .statusBarsPadding()
+                    .padding(top = 8.dp, start = 12.dp, end = 12.dp),
+                contentAlignment = Alignment.TopCenter
+            ) {
+                RexyyDynamicPill()
+            }
+        }
     }
+}
 }

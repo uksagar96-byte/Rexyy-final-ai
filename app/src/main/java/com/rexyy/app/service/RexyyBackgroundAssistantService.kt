@@ -20,6 +20,9 @@ import com.rexyy.app.MainActivity
 import com.rexyy.app.R
 import com.rexyy.app.notifications.NotificationSpeechCoordinator
 import com.rexyy.app.notifications.RexyyNotificationListenerService
+import com.rexyy.app.pill.DynamicPillManager
+import com.rexyy.app.pill.DynamicPillOverlayManager
+import com.rexyy.app.pill.RexyyPillState
 import com.rexyy.app.router.RexyyCommandRouter
 import com.rexyy.app.voice.VoiceCommandExecutor
 import com.rexyy.app.voice.VoiceCommandResult
@@ -139,6 +142,21 @@ class RexyyBackgroundAssistantService : Service(), WakeWordListener {
         RexyyAssistantServiceState.updateRunning(true)
         syncState(WakeWordState.WAKE_STANDBY)
 
+        val hasMic = androidx.core.content.ContextCompat.checkSelfPermission(
+            this,
+            android.Manifest.permission.RECORD_AUDIO
+        ) == android.content.pm.PackageManager.PERMISSION_GRANTED
+
+        if (!hasMic) {
+            DynamicPillManager.postMicrophoneDisabled()
+        } else {
+            DynamicPillManager.postWakeStandby()
+        }
+
+        if (DynamicPillOverlayManager.canDrawOverlay(this)) {
+            DynamicPillOverlayManager.showOverlay(this)
+        }
+
         wakeWordDetector?.startStandby()
 
         // Ensure notification listener service is recovered/rebound if user granted access
@@ -233,6 +251,7 @@ class RexyyBackgroundAssistantService : Service(), WakeWordListener {
     override fun onWakeWordDetected(phrase: String, inlineCommand: String?) {
         playCueTone()
         syncState(WakeWordState.WAKE_DETECTED)
+        DynamicPillManager.postWakeDetected(phrase)
 
         if (!inlineCommand.isNullOrBlank()) {
             // Wake word and command spoken in one breath: "Hello Rex Rahul ko call karo"
@@ -245,6 +264,7 @@ class RexyyBackgroundAssistantService : Service(), WakeWordListener {
                 mainHandler.post {
                     if (!isDestroyed && RexyyAssistantServiceState.serviceRunning.value) {
                         syncState(WakeWordState.COMMAND_LISTENING)
+                        DynamicPillManager.postCommandListening()
                         wakeWordDetector?.startCommandListening()
                     }
                 }
@@ -253,11 +273,13 @@ class RexyyBackgroundAssistantService : Service(), WakeWordListener {
     }
 
     override fun onCommandRecognized(command: String) {
+        DynamicPillManager.postCommandRecognized(command)
         executeCommandFromBackground(command)
     }
 
     override fun onCommandTimeout() {
         syncState(WakeWordState.RETURNING_TO_STANDBY)
+        DynamicPillManager.postWakeStandby()
         updateNotification("REXYY Active", "Listening for \"Hello Rex\"...")
         wakeWordDetector?.startStandby()
     }
@@ -265,6 +287,7 @@ class RexyyBackgroundAssistantService : Service(), WakeWordListener {
     override fun onError(errorCode: Int, message: String) {
         // Handled with bounded recovery inside WakeWordDetector
         syncState(WakeWordState.ERROR)
+        DynamicPillManager.postError(message)
     }
 
     override fun onStopInterrupt() {
@@ -275,6 +298,7 @@ class RexyyBackgroundAssistantService : Service(), WakeWordListener {
         ttsManager?.stop()
         RexyyAssistantServiceState.updateFeedback("Stopped.")
         syncState(WakeWordState.RETURNING_TO_STANDBY)
+        DynamicPillManager.postWakeStandby()
         updateNotification("REXYY Active", "Listening for \"Hello Rex\"...")
         wakeWordDetector?.startStandby()
     }
@@ -282,22 +306,41 @@ class RexyyBackgroundAssistantService : Service(), WakeWordListener {
     private fun executeCommandFromBackground(commandText: String) {
         RexyyAssistantServiceState.updateCommand(commandText)
         syncState(WakeWordState.PROCESSING)
+        DynamicPillManager.postProcessing(commandText)
         updateNotification("REXYY Processing...", commandText)
 
         serviceScope.launch {
             try {
                 syncState(WakeWordState.EXECUTING)
+                DynamicPillManager.postExecuting("Executing: $commandText")
                 val command = RexyyCommandRouter.route(commandText)
                 val result = VoiceCommandExecutor.execute(command, this@RexyyBackgroundAssistantService)
 
                 syncState(WakeWordState.VERIFYING)
+                DynamicPillManager.postVerifying("Verifying: $commandText")
 
                 val replyText = when (result) {
-                    is VoiceCommandResult.Handled -> result.replyText
-                    is VoiceCommandResult.Error -> result.errorMessage
-                    is VoiceCommandResult.RequiresConfirmation -> result.prompt
-                    is VoiceCommandResult.CollectMessageInput -> result.prompt
-                    is VoiceCommandResult.ForwardToAi -> "Sir, ${result.prompt} ke liye AI stream activate kar raha hoon."
+                    is VoiceCommandResult.Handled -> {
+                        DynamicPillManager.postSuccess(result.replyText)
+                        result.replyText
+                    }
+                    is VoiceCommandResult.Error -> {
+                        DynamicPillManager.postError(result.errorMessage)
+                        result.errorMessage
+                    }
+                    is VoiceCommandResult.RequiresConfirmation -> {
+                        DynamicPillManager.postState(RexyyPillState.Executing(result.prompt))
+                        result.prompt
+                    }
+                    is VoiceCommandResult.CollectMessageInput -> {
+                        DynamicPillManager.postState(RexyyPillState.Executing(result.prompt))
+                        result.prompt
+                    }
+                    is VoiceCommandResult.ForwardToAi -> {
+                        val aiMsg = "Sir, ${result.prompt} ke liye AI stream activate kar raha hoon."
+                        DynamicPillManager.postSuccess(aiMsg)
+                        aiMsg
+                    }
                 }
 
                 RexyyAssistantServiceState.updateFeedback(replyText)
@@ -306,6 +349,7 @@ class RexyyBackgroundAssistantService : Service(), WakeWordListener {
             } catch (e: Exception) {
                 val err = "Command failed: ${e.localizedMessage ?: "Unknown error"}"
                 RexyyAssistantServiceState.updateFeedback(err)
+                DynamicPillManager.postError(err)
                 speakFeedbackAndResume(err)
             }
         }
@@ -318,6 +362,7 @@ class RexyyBackgroundAssistantService : Service(), WakeWordListener {
             mainHandler.post {
                 if (!isDestroyed && RexyyAssistantServiceState.serviceRunning.value) {
                     syncState(WakeWordState.WAKE_STANDBY)
+                    DynamicPillManager.postWakeStandby()
                     updateNotification("REXYY Active", "Listening for \"Hello Rex\"...")
                     wakeWordDetector?.resumeAfterSpeaking()
                 }
@@ -328,6 +373,8 @@ class RexyyBackgroundAssistantService : Service(), WakeWordListener {
     override fun onDestroy() {
         isDestroyed = true
         NotificationSpeechCoordinator.unregisterListener(notificationSpeechListener)
+        DynamicPillManager.onServiceStopped()
+        DynamicPillOverlayManager.hideOverlay()
         RexyyAssistantServiceState.updateRunning(false)
         syncState(WakeWordState.WAKE_STANDBY)
 

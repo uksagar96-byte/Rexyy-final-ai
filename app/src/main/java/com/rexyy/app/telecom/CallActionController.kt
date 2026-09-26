@@ -92,21 +92,37 @@ class CallActionController(private val context: Context) {
     }
 
     fun callContact(target: String, confirmedDirectCall: Boolean = false): TelecomActionResult {
-        Phase7DiagnosticManager.updateCallState(CallLifecycleState.REQUESTED, target)
+        val cleanTarget = target.trim()
+        Phase7DiagnosticManager.updateCallState(CallLifecycleState.CALL_REQUESTED, cleanTarget)
+        com.rexyy.app.pill.DynamicPillManager.postCall(cleanTarget, "Call requested")
 
         testCallOverride?.let { overrideFn ->
-            val res = overrideFn(target, confirmedDirectCall)
+            val res = overrideFn(cleanTarget, confirmedDirectCall)
             when (res) {
-                is TelecomActionResult.Success -> Phase7DiagnosticManager.updateCallState(CallLifecycleState.STARTED, target)
-                is TelecomActionResult.Failure -> Phase7DiagnosticManager.updateCallState(CallLifecycleState.FAILED, target, res.error)
+                is TelecomActionResult.Success -> {
+                    Phase7DiagnosticManager.updateCallState(CallLifecycleState.CALL_STARTED, cleanTarget)
+                    com.rexyy.app.pill.DynamicPillManager.postCall(cleanTarget, "Calling")
+                }
+                is TelecomActionResult.Failure -> {
+                    Phase7DiagnosticManager.updateCallState(CallLifecycleState.CALL_FAILED, cleanTarget, res.error)
+                    com.rexyy.app.pill.DynamicPillManager.postError(res.error)
+                }
+                is TelecomActionResult.PermissionNeeded -> {
+                    Phase7DiagnosticManager.updateCallState(CallLifecycleState.CALL_FAILED, cleanTarget, res.message)
+                    com.rexyy.app.pill.DynamicPillManager.postError(res.message)
+                }
+                is TelecomActionResult.MultipleMatches -> {
+                    Phase7DiagnosticManager.updateCallState(CallLifecycleState.CALL_FAILED, cleanTarget, "Multiple contacts match")
+                    com.rexyy.app.pill.DynamicPillManager.postCall(cleanTarget, "${res.matches.size} contacts found")
+                }
                 else -> {}
             }
             return res
         }
 
-        val cleanTarget = target.trim()
         if (cleanTarget.isBlank()) {
-            Phase7DiagnosticManager.updateCallState(CallLifecycleState.FAILED, null, "Target is blank")
+            Phase7DiagnosticManager.updateCallState(CallLifecycleState.CALL_FAILED, null, "Target is blank")
+            com.rexyy.app.pill.DynamicPillManager.postError("Target contact is blank")
             return TelecomActionResult.Failure("Kisko call lagana hai? Please contact ka naam ya number batayein.")
         }
 
@@ -114,7 +130,8 @@ class CallActionController(private val context: Context) {
         val contactResolution = CallerIdentityResolver.resolveContactForAction(context, cleanTarget)
         val resolvedMatch = when (contactResolution) {
             is CallerIdentityResolver.ContactActionResult.PermissionNeeded -> {
-                Phase7DiagnosticManager.updateCallState(CallLifecycleState.FAILED, cleanTarget, "READ_CONTACTS required")
+                Phase7DiagnosticManager.updateCallState(CallLifecycleState.CALL_FAILED, cleanTarget, "READ_CONTACTS required")
+                com.rexyy.app.pill.DynamicPillManager.postError("Contacts permission required")
                 return TelecomActionResult.PermissionNeeded(
                     Manifest.permission.READ_CONTACTS,
                     "Contacts permission required hai. Settings mein Contacts permission allow karein."
@@ -126,12 +143,14 @@ class CallActionController(private val context: Context) {
                 if (digits.length >= 3) {
                     CallerIdentityResolver.ContactMatch(name = cleanTarget, phoneNumber = digits)
                 } else {
-                    Phase7DiagnosticManager.updateCallState(CallLifecycleState.FAILED, cleanTarget, "Contact not found")
+                    Phase7DiagnosticManager.updateCallState(CallLifecycleState.CALL_FAILED, cleanTarget, "Contact not found")
+                    com.rexyy.app.pill.DynamicPillManager.postError("Contact \"$cleanTarget\" not found")
                     return TelecomActionResult.Failure("Contact \"$cleanTarget\" contacts mein nahi mila.")
                 }
             }
             is CallerIdentityResolver.ContactActionResult.Multiple -> {
-                Phase7DiagnosticManager.updateCallState(CallLifecycleState.FAILED, cleanTarget, "Multiple contacts match")
+                Phase7DiagnosticManager.updateCallState(CallLifecycleState.CALL_FAILED, cleanTarget, "Multiple contacts match")
+                com.rexyy.app.pill.DynamicPillManager.postCall(cleanTarget, "${contactResolution.matches.size} contacts found")
                 return TelecomActionResult.MultipleMatches(cleanTarget, contactResolution.matches)
             }
             is CallerIdentityResolver.ContactActionResult.Resolved -> {
@@ -140,8 +159,10 @@ class CallActionController(private val context: Context) {
         }
 
         val cleanNumber = resolvedMatch.phoneNumber.replace(" ", "").replace("-", "")
-        if (cleanNumber.isBlank()) {
-            Phase7DiagnosticManager.updateCallState(CallLifecycleState.FAILED, resolvedMatch.name, "Phone number is empty")
+        val digitsOnly = cleanNumber.filter { it.isDigit() || it == '+' }
+        if (digitsOnly.length < 3) {
+            Phase7DiagnosticManager.updateCallState(CallLifecycleState.CALL_FAILED, resolvedMatch.name, "Phone number is empty or invalid")
+            com.rexyy.app.pill.DynamicPillManager.postError("Invalid phone number")
             return TelecomActionResult.Failure("${resolvedMatch.name} ke paas koi valid phone number nahi hai.")
         }
 
@@ -151,17 +172,34 @@ class CallActionController(private val context: Context) {
             Manifest.permission.CALL_PHONE
         ) == PackageManager.PERMISSION_GRANTED
 
-        if (confirmedDirectCall && hasCallPermission) {
+        if (confirmedDirectCall) {
+            if (!hasCallPermission) {
+                Phase7DiagnosticManager.updateCallState(CallLifecycleState.CALL_FAILED, resolvedMatch.name, "CALL_PHONE permission denied")
+                com.rexyy.app.pill.DynamicPillManager.postError("Call permission denied")
+                return TelecomActionResult.PermissionNeeded(
+                    Manifest.permission.CALL_PHONE,
+                    "Phone call karne ke liye Call Phone permission zaroori hai. Kripya permission allow karein."
+                )
+            }
+
             val callIntent = Intent(Intent.ACTION_CALL).apply {
                 data = Uri.parse("tel:${Uri.encode(cleanNumber)}")
                 addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
             }
             return try {
+                Phase7DiagnosticManager.updateCallState(CallLifecycleState.CALL_STARTING, resolvedMatch.name)
                 context.startActivity(callIntent)
-                Phase7DiagnosticManager.updateCallState(CallLifecycleState.STARTED, resolvedMatch.name)
+                Phase7DiagnosticManager.updateCallState(CallLifecycleState.CALL_STARTED, resolvedMatch.name)
+                com.rexyy.app.pill.DynamicPillManager.postCall(resolvedMatch.name, "Calling")
                 TelecomActionResult.Success("Calling ${resolvedMatch.name}...", recipientName = resolvedMatch.name, isDirectCall = true)
+            } catch (e: SecurityException) {
+                Phase7DiagnosticManager.updateCallState(CallLifecycleState.CALL_FAILED, resolvedMatch.name, e.localizedMessage)
+                com.rexyy.app.pill.DynamicPillManager.postError("Call permission denied: ${e.localizedMessage}")
+                TelecomActionResult.PermissionNeeded(Manifest.permission.CALL_PHONE, "Call permission denied: ${e.localizedMessage}")
             } catch (e: Exception) {
-                launchDialer(cleanNumber, resolvedMatch.name)
+                Phase7DiagnosticManager.updateCallState(CallLifecycleState.CALL_FAILED, resolvedMatch.name, e.localizedMessage)
+                com.rexyy.app.pill.DynamicPillManager.postError("Call failed: ${e.localizedMessage}")
+                TelecomActionResult.Failure("Call failed: ${e.localizedMessage}")
             }
         } else {
             return launchDialer(cleanNumber, resolvedMatch.name)
@@ -174,11 +212,14 @@ class CallActionController(private val context: Context) {
             addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         }
         return try {
+            Phase7DiagnosticManager.updateCallState(CallLifecycleState.CALL_STARTING, recipientName)
             context.startActivity(dialIntent)
-            Phase7DiagnosticManager.updateCallState(CallLifecycleState.STARTED, recipientName)
+            Phase7DiagnosticManager.updateCallState(CallLifecycleState.CALL_STARTED, recipientName)
+            com.rexyy.app.pill.DynamicPillManager.postCall(recipientName, "Dialer opened")
             TelecomActionResult.Success("Opening dialer for $recipientName.", recipientName = recipientName, isDirectCall = false)
         } catch (e: Exception) {
-            Phase7DiagnosticManager.updateCallState(CallLifecycleState.FAILED, recipientName, e.localizedMessage)
+            Phase7DiagnosticManager.updateCallState(CallLifecycleState.CALL_FAILED, recipientName, e.localizedMessage)
+            com.rexyy.app.pill.DynamicPillManager.postError("Unable to open dialer: ${e.localizedMessage}")
             TelecomActionResult.Failure("Unable to open dialer: ${e.localizedMessage}")
         }
     }

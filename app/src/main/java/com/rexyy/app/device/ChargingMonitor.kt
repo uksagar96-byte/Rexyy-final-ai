@@ -95,6 +95,9 @@ object ChargingMonitor {
             event = eventLabel
         )
 
+        // Post contextual charging state to Dynamic Pill
+        com.rexyy.app.pill.DynamicPillManager.postCharging(connected, pct)
+
         // Deduplication: do not announce if state hasn't changed or if called within 3 seconds
         if (lastAnnouncedState == connected && now - lastAnnouncementTime < 3000L) return
         lastAnnouncedState = connected
@@ -142,5 +145,15 @@ object ChargingMonitor {
             receiver = null
             isRegistered = false
         } catch (_: Exception) {}
+    }
+
+    fun resetForTesting(context: Context) {
+        try {
+            receiver?.let { context.applicationContext.unregisterReceiver(it) }
+        } catch (_: Exception) {}
+        receiver = null
+        isRegistered = false
+        lastAnnouncedState = null
+        lastAnnouncementTime = 0L
     }
 }

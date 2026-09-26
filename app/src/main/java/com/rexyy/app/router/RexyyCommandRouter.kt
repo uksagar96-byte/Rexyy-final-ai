@@ -554,7 +554,18 @@ object RexyyCommandRouter {
             }
         }
 
-        // "Ramzan ko whatsapp message bhejo" / "Ramzan ko whatsapp bhejo" (no body specified)
+        // Verb first with message: "Rahul ko WhatsApp message karo ki kal milte hain" / "Ramzan ko WhatsApp pe bol kal milte hain"
+        val msgWithVerbPattern = Regex("(?i)^(.+?)\\s+ko\\s+whats\\s*app\\s*(?:par|pe|main|me\\b)?\\s*(?:message\\s+)?(?:karo|bhejo|bolo|bol|likho|send karo|kaho|likh do|bhej do)\\s+(?:ki\\s+|that\\s+)?(.+)$")
+        val msgWithVerbMatch = msgWithVerbPattern.find(raw)
+        if (msgWithVerbMatch != null) {
+            val target = cleanTargetName(msgWithVerbMatch.groupValues[1])
+            val message = msgWithVerbMatch.groupValues[2].trim()
+            if (message.isNotBlank() && !message.equals("message", ignoreCase = true)) {
+                return LocalIntent.WhatsAppMessage(target = target, body = message, rawCommand = raw)
+            }
+        }
+
+        // "Ramzan ko whatsapp message bhejo" / "Rahul ko WhatsApp message karo" (no body specified)
         val hindiSendMatch = Regex("(?i)^(.+?)\\s+ko\\s+whats\\s*app\\s*(?:par|pe|main|me\\b)?\\s*(?:message\\s+)?(?:bhejo|karo|send karo)?$").find(raw)
         if (hindiSendMatch != null) {
             val target = cleanTargetName(hindiSendMatch.groupValues[1])
@@ -572,15 +583,6 @@ object RexyyCommandRouter {
             if (message.isNotBlank() && !message.equals("message", ignoreCase = true)) {
                 return LocalIntent.WhatsAppMessage(target = target, body = message, rawCommand = raw)
             }
-        }
-
-        // Verb first: "Ramzan ko WhatsApp pe bol kal milte hain" / "Rahul ko whatsapp par bolo main late ho jaunga"
-        val boloPattern = Regex("(?i)^(.+?)\\s+ko\\s+whats\\s*app\\s*(?:par|pe|main|me\\b)?\\s*(bolo|bol|bhejo|likho|send karo|kaho|likh do|bhej do)\\s+(.+)$")
-        val boloMatch = boloPattern.find(raw)
-        if (boloMatch != null) {
-            val target = cleanTargetName(boloMatch.groupValues[1])
-            val message = boloMatch.groupValues[3].trim()
-            return LocalIntent.WhatsAppMessage(target = target, body = message, rawCommand = raw)
         }
 
         // "Rahul ka whatsapp chat kholo" / "Open Rahul whatsapp chat"
@@ -839,12 +841,13 @@ object RexyyCommandRouter {
             return LocalIntent.SendSms(target = target, body = body, rawCommand = raw)
         }
 
-        // 2. "Rahul ko message karo kal milte hain" / "Rahul ko SMS bhejo kal milte hain"
+        // 2. "Rahul ko message karo kal milte hain" / "Rahul ko SMS bhejo ki main 10 minute me aa raha hoon"
         val verbFirstPattern = Regex("(?i)^(.+?)\\s+ko\\s+(message|sms|sandesh)\\s*(karo|bhejo|bhej do|send karo|likho|likh do)\\s+(.+)$")
         val verbFirstMatch = verbFirstPattern.find(raw)
         if (verbFirstMatch != null) {
             val target = cleanTargetName(verbFirstMatch.groupValues[1])
-            val body = verbFirstMatch.groupValues[4].trim()
+            val rawBody = verbFirstMatch.groupValues[4].trim()
+            val body = rawBody.replace("^(?i)(?:ki|that)\\s+".toRegex(), "").trim()
             return LocalIntent.SendSms(target = target, body = body, rawCommand = raw)
         }
 

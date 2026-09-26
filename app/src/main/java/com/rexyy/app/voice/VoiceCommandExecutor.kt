@@ -309,6 +309,7 @@ object VoiceCommandExecutor {
         return when (val sent = wa.executeSendWithAccessibility(cmd.target, cmd.body)) {
             is WhatsAppActionResult.Success -> VoiceCommandResult.Handled(sent.message)
             is WhatsAppActionResult.NotInstalled -> VoiceCommandResult.Handled(sent.message)
+            is WhatsAppActionResult.AccessibilityRequired -> VoiceCommandResult.Error(sent.message)
             is WhatsAppActionResult.MultipleMatches -> {
                 val names = sent.matches.take(3).joinToString { it.name }
                 VoiceCommandResult.Handled("${sent.matches.size} contacts mile: $names. Kisko WhatsApp bhejna hai?")
@@ -321,7 +322,10 @@ object VoiceCommandExecutor {
                 )
             }
             is WhatsAppActionResult.Failure -> VoiceCommandResult.Error(sent.error)
-            else -> VoiceCommandResult.Error("WhatsApp message send nahi hua.")
+            is WhatsAppActionResult.RequiresConfirmation -> VoiceCommandResult.RequiresConfirmation(
+                prompt = sent.confirmationPrompt,
+                commandToExecute = cmd.copy(confirmedSend = true)
+            )
         }
     }
 

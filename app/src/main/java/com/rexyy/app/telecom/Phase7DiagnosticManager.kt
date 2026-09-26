@@ -6,6 +6,12 @@ import kotlinx.coroutines.flow.asStateFlow
 
 enum class ContactsLookupState {
     STANDBY,
+    CONTACT_SEARCHING,
+    CONTACT_RESOLVED,
+    CONTACT_AMBIGUOUS,
+    CONTACT_NOT_FOUND,
+    CONTACT_FAILED,
+    // Backward compatibility
     FOUND,
     MULTIPLE,
     NOT_FOUND,
@@ -14,6 +20,13 @@ enum class ContactsLookupState {
 
 enum class CallLifecycleState {
     IDLE,
+    CALL_REQUESTED,
+    CALL_STARTING,
+    CALL_STARTED,
+    CALL_ACTIVE,
+    CALL_ENDED,
+    CALL_FAILED,
+    // Backward compatibility
     REQUESTED,
     STARTED,
     ACTIVE,
@@ -23,6 +36,11 @@ enum class CallLifecycleState {
 
 enum class SmsLifecycleState {
     IDLE,
+    SMS_PREPARING,
+    SMS_SENDING,
+    SMS_SENT,
+    SMS_FAILED,
+    // Backward compatibility
     PREPARING,
     SENDING,
     SENT,
@@ -31,6 +49,14 @@ enum class SmsLifecycleState {
 
 enum class WhatsAppWorkflowState {
     IDLE,
+    WHATSAPP_RESOLVING,
+    WHATSAPP_OPENING,
+    WHATSAPP_CHAT_RESOLVED,
+    WHATSAPP_INPUTTING,
+    WHATSAPP_SENDING,
+    WHATSAPP_VERIFIED,
+    WHATSAPP_FAILED,
+    // Backward compatibility
     OPENING,
     CHAT_FOUND,
     TEXT_ENTERED,

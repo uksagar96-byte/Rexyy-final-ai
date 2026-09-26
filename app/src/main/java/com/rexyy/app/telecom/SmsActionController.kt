@@ -29,38 +29,56 @@ class SmsActionController(private val context: Context) {
         val cleanMessage = messageText.trim()
 
         Phase7DiagnosticManager.updateSmsState(
-            state = SmsLifecycleState.PREPARING,
+            state = SmsLifecycleState.SMS_PREPARING,
             recipient = cleanTarget,
             messageLength = cleanMessage.length
         )
+        com.rexyy.app.pill.DynamicPillManager.postSms(cleanTarget, "Preparing SMS")
 
         testSmsOverride?.let { overrideFn ->
             val res = overrideFn(cleanTarget, cleanMessage)
             when (res) {
-                is SmsActionResult.Success -> Phase7DiagnosticManager.updateSmsState(
-                    state = SmsLifecycleState.SENT,
-                    recipient = cleanTarget,
-                    messageLength = cleanMessage.length
-                )
-                is SmsActionResult.Failure -> Phase7DiagnosticManager.updateSmsState(
-                    state = SmsLifecycleState.FAILED,
-                    recipient = cleanTarget,
-                    messageLength = cleanMessage.length,
-                    error = res.error
-                )
+                is SmsActionResult.Success -> {
+                    Phase7DiagnosticManager.updateSmsState(
+                        state = SmsLifecycleState.SMS_SENT,
+                        recipient = cleanTarget,
+                        messageLength = cleanMessage.length
+                    )
+                    com.rexyy.app.pill.DynamicPillManager.postSuccess(res.message)
+                }
+                is SmsActionResult.Failure -> {
+                    Phase7DiagnosticManager.updateSmsState(
+                        state = SmsLifecycleState.SMS_FAILED,
+                        recipient = cleanTarget,
+                        messageLength = cleanMessage.length,
+                        error = res.error
+                    )
+                    com.rexyy.app.pill.DynamicPillManager.postError(res.error)
+                }
+                is SmsActionResult.PermissionNeeded -> {
+                    Phase7DiagnosticManager.updateSmsState(
+                        state = SmsLifecycleState.SMS_FAILED,
+                        recipient = cleanTarget,
+                        messageLength = cleanMessage.length,
+                        error = res.message
+                    )
+                    com.rexyy.app.pill.DynamicPillManager.postError(res.message)
+                }
                 else -> {}
             }
             return res
         }
 
         if (cleanTarget.isBlank()) {
-            Phase7DiagnosticManager.updateSmsState(SmsLifecycleState.FAILED, null, 0, "Recipient is blank")
+            Phase7DiagnosticManager.updateSmsState(SmsLifecycleState.SMS_FAILED, null, 0, "Recipient is blank")
+            com.rexyy.app.pill.DynamicPillManager.postError("Recipient is blank")
             return SmsActionResult.Failure("Kisko SMS bhejna hai? Please contact ka naam ya number batayein.")
         }
 
         if (cleanMessage.isBlank()) {
             // NEVER invent a message
-            Phase7DiagnosticManager.updateSmsState(SmsLifecycleState.PREPARING, cleanTarget, 0)
+            Phase7DiagnosticManager.updateSmsState(SmsLifecycleState.SMS_PREPARING, cleanTarget, 0)
+            com.rexyy.app.pill.DynamicPillManager.postSms(cleanTarget, "Message text needed")
             return SmsActionResult.NeedsMessageBody(
                 target = cleanTarget,
                 prompt = "$cleanTarget ko kya SMS bhejna hai?"
@@ -71,7 +89,8 @@ class SmsActionController(private val context: Context) {
         val contactRes = CallerIdentityResolver.resolveContactForAction(context, cleanTarget)
         val resolvedMatch = when (contactRes) {
             is CallerIdentityResolver.ContactActionResult.PermissionNeeded -> {
-                Phase7DiagnosticManager.updateSmsState(SmsLifecycleState.FAILED, cleanTarget, cleanMessage.length, "READ_CONTACTS required")
+                Phase7DiagnosticManager.updateSmsState(SmsLifecycleState.SMS_FAILED, cleanTarget, cleanMessage.length, "READ_CONTACTS required")
+                com.rexyy.app.pill.DynamicPillManager.postError("Contacts permission required")
                 return SmsActionResult.PermissionNeeded(
                     Manifest.permission.READ_CONTACTS,
                     "Contacts permission required hai. Settings mein Contacts permission allow karein."
@@ -82,12 +101,14 @@ class SmsActionController(private val context: Context) {
                 if (digits.length >= 3) {
                     CallerIdentityResolver.ContactMatch(name = cleanTarget, phoneNumber = digits)
                 } else {
-                    Phase7DiagnosticManager.updateSmsState(SmsLifecycleState.FAILED, cleanTarget, cleanMessage.length, "Contact not found")
+                    Phase7DiagnosticManager.updateSmsState(SmsLifecycleState.SMS_FAILED, cleanTarget, cleanMessage.length, "Contact not found")
+                    com.rexyy.app.pill.DynamicPillManager.postError("Contact \"$cleanTarget\" not found")
                     return SmsActionResult.Failure("Contact \"$cleanTarget\" contacts mein nahi mila.")
                 }
             }
             is CallerIdentityResolver.ContactActionResult.Multiple -> {
-                Phase7DiagnosticManager.updateSmsState(SmsLifecycleState.FAILED, cleanTarget, cleanMessage.length, "Multiple contacts match")
+                Phase7DiagnosticManager.updateSmsState(SmsLifecycleState.SMS_FAILED, cleanTarget, cleanMessage.length, "Multiple contacts match")
+                com.rexyy.app.pill.DynamicPillManager.postSms(cleanTarget, "${contactRes.matches.size} contacts found")
                 return SmsActionResult.MultipleMatches(cleanTarget, contactRes.matches)
             }
             is CallerIdentityResolver.ContactActionResult.Resolved -> {
@@ -96,8 +117,10 @@ class SmsActionController(private val context: Context) {
         }
 
         val cleanNumber = resolvedMatch.phoneNumber.replace(" ", "").replace("-", "")
-        if (cleanNumber.isBlank()) {
-            Phase7DiagnosticManager.updateSmsState(SmsLifecycleState.FAILED, resolvedMatch.name, cleanMessage.length, "Phone number empty")
+        val digitsOnly = cleanNumber.filter { it.isDigit() || it == '+' }
+        if (digitsOnly.length < 3) {
+            Phase7DiagnosticManager.updateSmsState(SmsLifecycleState.SMS_FAILED, resolvedMatch.name, cleanMessage.length, "Phone number empty or invalid")
+            com.rexyy.app.pill.DynamicPillManager.postError("Invalid phone number")
             return SmsActionResult.Failure("${resolvedMatch.name} ke paas koi valid phone number nahi hai.")
         }
 
@@ -107,11 +130,26 @@ class SmsActionController(private val context: Context) {
             Manifest.permission.SEND_SMS
         ) == PackageManager.PERMISSION_GRANTED
 
+        if (confirmedSend && !hasSmsPermission) {
+            Phase7DiagnosticManager.updateSmsState(
+                state = SmsLifecycleState.SMS_FAILED,
+                recipient = resolvedMatch.name,
+                messageLength = cleanMessage.length,
+                error = "SEND_SMS permission denied"
+            )
+            com.rexyy.app.pill.DynamicPillManager.postError("SMS permission denied")
+            return SmsActionResult.PermissionNeeded(
+                Manifest.permission.SEND_SMS,
+                "SMS send karne ke liye Send SMS permission zaroori hai. Settings mein permission allow karein."
+            )
+        }
+
         Phase7DiagnosticManager.updateSmsState(
-            state = SmsLifecycleState.SENDING,
+            state = SmsLifecycleState.SMS_SENDING,
             recipient = resolvedMatch.name,
             messageLength = cleanMessage.length
         )
+        com.rexyy.app.pill.DynamicPillManager.postSms(resolvedMatch.name, "Sending SMS")
 
         if (hasSmsPermission) {
             return try {
@@ -131,18 +169,25 @@ class SmsActionController(private val context: Context) {
                 }
 
                 Phase7DiagnosticManager.updateSmsState(
-                    state = SmsLifecycleState.SENT,
+                    state = SmsLifecycleState.SMS_SENT,
                     recipient = resolvedMatch.name,
                     messageLength = cleanMessage.length
                 )
+                com.rexyy.app.pill.DynamicPillManager.postSuccess("${resolvedMatch.name} ko SMS bhej diya gaya hai.")
                 SmsActionResult.Success(
                     message = "${resolvedMatch.name} ko SMS bhej diya gaya hai.",
                     recipientName = resolvedMatch.name,
                     isDirectlySent = true
                 )
             } catch (e: Exception) {
-                // Fallback to composer
-                openSmsComposer(cleanNumber, resolvedMatch.name, cleanMessage)
+                Phase7DiagnosticManager.updateSmsState(
+                    state = SmsLifecycleState.SMS_FAILED,
+                    recipient = resolvedMatch.name,
+                    messageLength = cleanMessage.length,
+                    error = e.localizedMessage
+                )
+                com.rexyy.app.pill.DynamicPillManager.postError("SMS failed: ${e.localizedMessage}")
+                SmsActionResult.Failure("SMS send nahi ho paya: ${e.localizedMessage}")
             }
         } else {
             return openSmsComposer(cleanNumber, resolvedMatch.name, cleanMessage)
@@ -157,11 +202,7 @@ class SmsActionController(private val context: Context) {
         }
         return try {
             context.startActivity(sendIntent)
-            Phase7DiagnosticManager.updateSmsState(
-                state = SmsLifecycleState.SENT,
-                recipient = recipientName,
-                messageLength = messageText.length
-            )
+            com.rexyy.app.pill.DynamicPillManager.postSms(recipientName, "Composer opened")
             SmsActionResult.Success(
                 message = "$recipientName ke liye SMS composer open ho gaya hai. Tap send to deliver.",
                 recipientName = recipientName,
@@ -169,11 +210,12 @@ class SmsActionController(private val context: Context) {
             )
         } catch (e: Exception) {
             Phase7DiagnosticManager.updateSmsState(
-                state = SmsLifecycleState.FAILED,
+                state = SmsLifecycleState.SMS_FAILED,
                 recipient = recipientName,
                 messageLength = messageText.length,
                 error = e.localizedMessage
             )
+            com.rexyy.app.pill.DynamicPillManager.postError("SMS composer failed: ${e.localizedMessage}")
             SmsActionResult.Failure("SMS composer open nahi ho paya: ${e.localizedMessage}")
         }
     }

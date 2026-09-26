@@ -160,6 +160,9 @@ class RexyyNotificationListenerService : NotificationListenerService() {
             outcome = "Processing"
         )
 
+        // Post contextual notification event to Dynamic Pill
+        com.rexyy.app.pill.DynamicPillManager.postNotification(appName, sanitized.sanitizedTitle)
+
         // Announce notification if enabled in user settings
         if (storage.isNotificationAnnouncementEnabled()) {
             announceNotification(sanitized.speechAnnouncement, appName, eventKey, storage)
