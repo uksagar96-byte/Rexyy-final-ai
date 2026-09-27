@@ -8,8 +8,6 @@ import android.app.Service
 import android.content.Context
 import android.content.Intent
 import android.content.pm.ServiceInfo
-import android.media.AudioManager
-import android.media.ToneGenerator
 import android.os.Build
 import android.os.Handler
 import android.os.IBinder
@@ -78,7 +76,6 @@ class RexyyBackgroundAssistantService : Service(), WakeWordListener {
 
     private var wakeWordDetector: WakeWordDetector? = null
     private var ttsManager: VoiceTtsManager? = null
-    private var toneGenerator: ToneGenerator? = null
 
     private var isDestroyed = false
 
@@ -106,12 +103,6 @@ class RexyyBackgroundAssistantService : Service(), WakeWordListener {
     override fun onCreate() {
         super.onCreate()
         createNotificationChannel()
-
-        toneGenerator = try {
-            ToneGenerator(AudioManager.STREAM_NOTIFICATION, 80)
-        } catch (_: Exception) {
-            null
-        }
 
         ttsManager = VoiceTtsManager(this) { isSpeaking ->
             if (isSpeaking) {
@@ -237,16 +228,9 @@ class RexyyBackgroundAssistantService : Service(), WakeWordListener {
         wakeWordDetector?.transitionState(state)
     }
 
-    private fun playCueTone() {
-        try {
-            toneGenerator?.startTone(ToneGenerator.TONE_PROP_BEEP, 100)
-        } catch (_: Exception) {}
-    }
-
     // WakeWordListener implementation
 
     override fun onWakeWordDetected(phrase: String, inlineCommand: String?) {
-        playCueTone()
         syncState(WakeWordState.WAKE_DETECTED)
         DynamicPillManager.postWakeDetected(phrase)
 
@@ -278,6 +262,10 @@ class RexyyBackgroundAssistantService : Service(), WakeWordListener {
         syncState(WakeWordState.COMMAND_RECOGNIZED)
         DynamicPillManager.postCommandRecognized(command)
         executeCommandFromBackground(command)
+    }
+
+    override fun onPartialCommandRecognized(partialText: String) {
+        DynamicPillManager.postLiveSpeech(partialText)
     }
 
     override fun onCommandTimeout() {
@@ -391,11 +379,6 @@ class RexyyBackgroundAssistantService : Service(), WakeWordListener {
         try {
             ttsManager?.shutdown()
             ttsManager = null
-        } catch (_: Exception) {}
-
-        try {
-            toneGenerator?.release()
-            toneGenerator = null
         } catch (_: Exception) {}
 
         super.onDestroy()

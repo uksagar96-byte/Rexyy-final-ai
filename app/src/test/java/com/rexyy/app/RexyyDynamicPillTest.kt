@@ -68,6 +68,15 @@ class RexyyDynamicPillTest {
     }
 
     @Test
+    fun testD2_CommandListening_LiveSpeechUpdatesSubtitle() {
+        DynamicPillManager.postLiveSpeech("Turn on flashlight")
+        val state = DynamicPillManager.pillState.value
+        assertTrue(state is RexyyPillState.CommandListening)
+        assertEquals("Listening...", state.title)
+        assertEquals("Turn on flashlight", state.subtitle)
+    }
+
+    @Test
     fun testE_RecognizedCommand_DisplaysRecognizedQuery() {
         DynamicPillManager.postCommandRecognized("Instagram kholo")
         val state = DynamicPillManager.pillState.value

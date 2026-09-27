@@ -12,6 +12,7 @@ import android.speech.RecognizerIntent
 import android.speech.SpeechRecognizer
 import androidx.core.content.ContextCompat
 import com.rexyy.app.data.local.SecureStorage
+import com.rexyy.app.pill.DynamicPillManager
 import com.rexyy.app.service.BackgroundListeningDiagnostics
 import com.rexyy.app.service.WakeWordState
 import kotlinx.coroutines.CoroutineScope
@@ -42,6 +43,11 @@ interface WakeWordListener {
      * Called when a full voice command is recognized during COMMAND_LISTENING.
      */
     fun onCommandRecognized(command: String)
+
+    /**
+     * Called when partial speech is recognized during COMMAND_LISTENING.
+     */
+    fun onPartialCommandRecognized(partialText: String) {}
 
     /**
      * Called when command listening times out without speech.
@@ -331,6 +337,11 @@ class AndroidWakeWordDetector(
                 if (currentMode == Mode.STANDBY) {
                     processStandbyResults(topMatch, matches)
                 } else {
+                    if (topMatch.isNotBlank()) {
+                        mainHandler.post {
+                            DynamicPillManager.postCommandRecognized(topMatch)
+                        }
+                    }
                     processCommandResults(topMatch)
                 }
             }
@@ -349,8 +360,13 @@ class AndroidWakeWordDetector(
                     return
                 }
 
-                // In standby mode, detect wake-word early from partial results for instant response
-                if (currentMode == Mode.STANDBY) {
+                // In command mode, update live speech immediately
+                if (currentMode == Mode.COMMAND) {
+                    mainHandler.post {
+                        listener?.onPartialCommandRecognized(partial)
+                        DynamicPillManager.postLiveSpeech(partial)
+                    }
+                } else if (currentMode == Mode.STANDBY) {
                     val matchResult = wakeWordPattern.find(lower)
                     if (matchResult != null) {
                         // Immediate wake word detection! Cancel standby listening immediately
@@ -425,6 +441,7 @@ class AndroidWakeWordDetector(
             listener?.onCommandTimeout()
         } else {
             transitionState(WakeWordState.PROCESSING)
+            DynamicPillManager.postProcessing(text)
             listener?.onCommandRecognized(text)
         }
     }

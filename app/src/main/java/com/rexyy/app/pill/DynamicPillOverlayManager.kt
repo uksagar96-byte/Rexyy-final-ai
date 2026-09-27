@@ -78,7 +78,8 @@ object DynamicPillOverlayManager {
                 windowManager = wm
 
                 val density = context.resources.displayMetrics.density
-                val topMargin = (36 * density).toInt()
+                // Dynamic Island / top system area offset: 8dp below the usable top system edge
+                val topMargin = (8 * density).toInt()
 
                 val windowType = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                     WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
@@ -92,11 +93,11 @@ object DynamicPillOverlayManager {
                     WindowManager.LayoutParams.WRAP_CONTENT,
                     windowType,
                     WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
-                        WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL or
-                        WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
+                        WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL,
                     PixelFormat.TRANSLUCENT
                 ).apply {
                     gravity = Gravity.TOP or Gravity.CENTER_HORIZONTAL
+                    x = 0
                     y = topMargin
                 }
 

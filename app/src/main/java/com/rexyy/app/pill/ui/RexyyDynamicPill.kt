@@ -197,15 +197,23 @@ private fun CollapsedPillContent(
 
         Spacer(modifier = Modifier.width(6.dp))
 
+        val displayText = when {
+            state is RexyyPillState.CommandListening && state.liveSpeech.isNotBlank() -> state.liveSpeech
+            state is RexyyPillState.CommandRecognized -> state.commandText
+            state is RexyyPillState.Processing && state.commandText.isNotBlank() -> "Processing: ${state.commandText.removeSurrounding("\"")}"
+            else -> state.title
+        }
+
         Text(
-            text = state.title,
+            text = displayText,
             style = MaterialTheme.typography.labelSmall.copy(
                 fontWeight = FontWeight.SemiBold,
                 fontSize = 11.sp,
                 color = RexyyTextSecondary
             ),
             maxLines = 1,
-            overflow = TextOverflow.Ellipsis
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.widthIn(max = 200.dp)
         )
     }
 }
@@ -265,8 +273,14 @@ private fun ExpandedPillContent(
                 )
             }
 
+            val displaySubtitle = when {
+                state is RexyyPillState.Processing && state.commandText.isNotBlank() ->
+                    "Processing: ${state.commandText.removeSurrounding("\"")}"
+                else -> state.subtitle
+            }
+
             Text(
-                text = state.subtitle,
+                text = displaySubtitle,
                 style = MaterialTheme.typography.bodySmall.copy(
                     fontWeight = FontWeight.Medium,
                     fontSize = 12.sp,

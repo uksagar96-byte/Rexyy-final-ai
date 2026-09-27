@@ -24,9 +24,9 @@ sealed class RexyyPillState {
         override val isExpanded = true
     }
 
-    data object CommandListening : RexyyPillState() {
+    data class CommandListening(val liveSpeech: String = "") : RexyyPillState() {
         override val title = "Listening..."
-        override val subtitle = "Speak your command"
+        override val subtitle = if (liveSpeech.isNotBlank()) liveSpeech else "Speak your command"
         override val isExpanded = true
     }
 

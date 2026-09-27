@@ -84,8 +84,12 @@ object DynamicPillManager {
         postState(RexyyPillState.WakeDetected(phrase))
     }
 
-    fun postCommandListening() {
-        postState(RexyyPillState.CommandListening)
+    fun postCommandListening(liveSpeech: String = "") {
+        postState(RexyyPillState.CommandListening(liveSpeech))
+    }
+
+    fun postLiveSpeech(liveSpeech: String) {
+        postState(RexyyPillState.CommandListening(liveSpeech))
     }
 
     fun postCommandRecognized(command: String) {
