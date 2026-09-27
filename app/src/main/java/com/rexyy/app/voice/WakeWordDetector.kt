@@ -82,7 +82,7 @@ interface WakeWordDetector {
 
     companion object {
         fun create(context: Context): WakeWordDetector {
-            return AndroidWakeWordDetector(context.applicationContext)
+            return AndroidWakeWordDetector(context)
         }
     }
 }
@@ -111,6 +111,7 @@ class AndroidWakeWordDetector(
 
     private var consecutiveErrors = 0
     private var standbyLoopJob: Job? = null
+    private var speechWatchdogJob: Job? = null
     private var wakeAlreadyTriggered = false
 
     private enum class Mode {
@@ -144,6 +145,8 @@ class AndroidWakeWordDetector(
         if (isDestroyed) return
         isStandbyActive = true
         isPausedForSpeaking = false
+        wakeAlreadyTriggered = false
+        speechWatchdogJob?.cancel()
         consecutiveErrors = 0
         currentMode = Mode.STANDBY
         transitionState(WakeWordState.WAKE_STANDBY)
@@ -152,6 +155,9 @@ class AndroidWakeWordDetector(
 
     override fun startCommandListening() {
         if (isDestroyed) return
+        isPausedForSpeaking = false
+        wakeAlreadyTriggered = false
+        speechWatchdogJob?.cancel()
         standbyLoopJob?.cancel()
         currentMode = Mode.COMMAND
         transitionState(WakeWordState.COMMAND_LISTENING)
@@ -228,6 +234,9 @@ class AndroidWakeWordDetector(
                 speechRecognizer?.startListening(intent)
                 isListeningActive = true
                 BackgroundListeningDiagnostics.recordRecognizerStarted()
+                if (mode == Mode.STANDBY) {
+                    BackgroundListeningDiagnostics.recordWakeEngineListening()
+                }
             } catch (e: Exception) {
                 isListeningActive = false
                 handleErrorInternal(SpeechRecognizer.ERROR_CLIENT, "startListening exception: ${e.message}")
@@ -317,15 +326,28 @@ class AndroidWakeWordDetector(
             override fun onEndOfSpeech() {
                 BackgroundListeningDiagnostics.logEvent("END_OF_SPEECH", _state.value)
                 isListeningActive = false
+                if (currentMode == Mode.STANDBY) {
+                    speechWatchdogJob?.cancel()
+                    speechWatchdogJob = scope.launch {
+                        delay(3500L)
+                        if (isStandbyActive && !isListeningActive && !wakeAlreadyTriggered && !isPausedForSpeaking) {
+                            BackgroundListeningDiagnostics.logEvent("END_OF_SPEECH_WATCHDOG_RESTART", _state.value)
+                            cancelListeningInternal()
+                            scheduleStandbyListening(200L)
+                        }
+                    }
+                }
             }
 
             override fun onError(error: Int) {
+                speechWatchdogJob?.cancel()
                 isListeningActive = false
                 val errorMsg = getErrorText(error)
                 handleErrorInternal(error, errorMsg)
             }
 
             override fun onResults(results: Bundle?) {
+                speechWatchdogJob?.cancel()
                 isListeningActive = false
                 val matches = results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
                 val topMatch = matches?.firstOrNull()?.trim() ?: ""
@@ -475,7 +497,6 @@ class AndroidWakeWordDetector(
 
         // Genuine or transient errors: ERROR_CLIENT (5), ERROR_RECOGNIZER_BUSY (8), ERROR_NETWORK (2), etc.
         consecutiveErrors++
-        transitionState(WakeWordState.ERROR)
         BackgroundListeningDiagnostics.recordRecognitionError(errorCode, errorMsg)
         BackgroundListeningDiagnostics.recordRecoveryAttempt(consecutiveErrors)
 
@@ -487,16 +508,22 @@ class AndroidWakeWordDetector(
             }
         }
 
-        // Bounded exponential backoff: 500ms -> 1s -> 2s, capped at 5s.
+        // Bounded exponential recovery: 350ms -> 750ms -> 1500ms, capped at 3000ms.
         val backoffMs = when (consecutiveErrors) {
-            1 -> 500L
-            2 -> 1000L
-            3 -> 2000L
-            else -> 5000L
+            1 -> 350L
+            2 -> 750L
+            3 -> 1500L
+            else -> 3000L
         }
 
         scheduleStandbyListening(backoffMs)
-        listener?.onError(errorCode, errorMsg)
+        if (currentMode == Mode.COMMAND) {
+            transitionState(WakeWordState.ERROR)
+            listener?.onError(errorCode, errorMsg)
+        } else {
+            // Keep state in WAKE_STANDBY so standby continues silently
+            transitionState(WakeWordState.WAKE_STANDBY)
+        }
     }
 
     private fun getErrorText(errorCode: Int): String {

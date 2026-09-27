@@ -17,8 +17,10 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
+import androidx.compose.ui.platform.LocalContext
 import com.rexyy.app.network.provider.AiProviderType
 import com.rexyy.app.pill.ui.RexyyDynamicPill
+import com.rexyy.app.service.BackgroundAssistantManager
 import com.rexyy.app.ui.chat.ChatScreen
 import com.rexyy.app.ui.chat.ChatViewModel
 import com.rexyy.app.ui.control.ControlCenterScreen
@@ -37,6 +39,7 @@ fun RexyyMainScreen(
     viewModel: ChatViewModel = viewModel(factory = ChatViewModel.Factory),
     modifier: Modifier = Modifier
 ) {
+    val context = LocalContext.current
     val uiState by viewModel.uiState.collectAsState()
 
     // Determine initial screen based on whether setup wizard has been completed
@@ -111,7 +114,12 @@ fun RexyyMainScreen(
                     onConfirmAction = { viewModel.confirmPendingAction() },
                     onCancelAction = { viewModel.cancelPendingAction() },
                     onCancelTask = { viewModel.cancelActiveTask() },
-                    onActivateRexyy = { viewModel.activateRexyy() },
+                    onActivateRexyy = {
+                        viewModel.activateRexyy()
+                        if (BackgroundAssistantManager.canStartService(context)) {
+                            BackgroundAssistantManager.startAssistant(context)
+                        }
+                    },
                     onDismissActivationCinematic = { viewModel.dismissActivationCinematic() },
                     onReplayActivation = { viewModel.replayActivationCinematic() },
                     onShowIntro = { viewModel.setShowIntroDialog(it) }
@@ -212,6 +220,9 @@ fun RexyyMainScreen(
                     onNavigateBack = { currentScreen = Screen.MainAssistant },
                     onActivateRexyy = {
                         viewModel.activateRexyy()
+                        if (BackgroundAssistantManager.canStartService(context)) {
+                            BackgroundAssistantManager.startAssistant(context)
+                        }
                     },
                     isRexyyActivated = uiState.isRexyyActivated
                 )

@@ -102,7 +102,10 @@ class RexyyBackgroundAssistantService : Service(), WakeWordListener {
 
     override fun onCreate() {
         super.onCreate()
+        BackgroundListeningDiagnostics.recordServiceCreated()
         createNotificationChannel()
+        startForegroundWithMicrophone()
+        BackgroundListeningDiagnostics.recordServiceForeground()
 
         ttsManager = VoiceTtsManager(this) { isSpeaking ->
             if (isSpeaking) {
@@ -110,6 +113,7 @@ class RexyyBackgroundAssistantService : Service(), WakeWordListener {
             }
         }
 
+        BackgroundListeningDiagnostics.recordWakeEngineCreated()
         wakeWordDetector = WakeWordDetector.create(this).apply {
             setListener(this@RexyyBackgroundAssistantService)
         }
@@ -118,6 +122,7 @@ class RexyyBackgroundAssistantService : Service(), WakeWordListener {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        BackgroundListeningDiagnostics.recordServiceStarted()
         if (intent?.action == ACTION_STOP_SERVICE) {
             stopSelf()
             return START_NOT_STICKY
@@ -131,10 +136,12 @@ class RexyyBackgroundAssistantService : Service(), WakeWordListener {
             android.Manifest.permission.RECORD_AUDIO
         ) == android.content.pm.PackageManager.PERMISSION_GRANTED
 
+        BackgroundListeningDiagnostics.recordMicRequested()
         if (!hasMic) {
             syncState(WakeWordState.MICROPHONE_DISABLED)
             DynamicPillManager.postMicrophoneDisabled()
         } else {
+            BackgroundListeningDiagnostics.recordMicActive()
             syncState(WakeWordState.WAKE_STANDBY)
             DynamicPillManager.postWakeStandby()
         }
@@ -144,6 +151,7 @@ class RexyyBackgroundAssistantService : Service(), WakeWordListener {
         }
 
         if (hasMic) {
+            BackgroundListeningDiagnostics.recordWakeEngineStarted()
             wakeWordDetector?.startStandby()
         }
 
@@ -278,8 +286,13 @@ class RexyyBackgroundAssistantService : Service(), WakeWordListener {
 
     override fun onError(errorCode: Int, message: String) {
         // Handled with bounded recovery inside WakeWordDetector
-        syncState(WakeWordState.ERROR)
-        DynamicPillManager.postError(message)
+        BackgroundListeningDiagnostics.recordWakeEngineError("Code: $errorCode, $message")
+        if (RexyyAssistantServiceState.currentState.value == WakeWordState.WAKE_STANDBY) {
+            DynamicPillManager.postWakeStandby()
+        } else {
+            syncState(WakeWordState.ERROR)
+            DynamicPillManager.postError(message)
+        }
     }
 
     override fun onStopInterrupt() {
@@ -363,6 +376,7 @@ class RexyyBackgroundAssistantService : Service(), WakeWordListener {
     }
 
     override fun onDestroy() {
+        BackgroundListeningDiagnostics.recordServiceDestroyed()
         isDestroyed = true
         NotificationSpeechCoordinator.unregisterListener(notificationSpeechListener)
         DynamicPillManager.onServiceStopped()

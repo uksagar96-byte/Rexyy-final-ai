@@ -198,9 +198,15 @@ private fun CollapsedPillContent(
         Spacer(modifier = Modifier.width(6.dp))
 
         val displayText = when {
+            state is RexyyPillState.WakeStandby -> "Standby"
+            state is RexyyPillState.WakeDetected -> "Listening..."
             state is RexyyPillState.CommandListening && state.liveSpeech.isNotBlank() -> state.liveSpeech
+            state is RexyyPillState.CommandListening -> "Listening..."
             state is RexyyPillState.CommandRecognized -> state.commandText
-            state is RexyyPillState.Processing && state.commandText.isNotBlank() -> "Processing: ${state.commandText.removeSurrounding("\"")}"
+            state is RexyyPillState.Processing -> "Thinking..."
+            state is RexyyPillState.Executing -> state.actionText
+            state is RexyyPillState.Verifying -> "Verifying..."
+            state is RexyyPillState.Success -> "Done"
             else -> state.title
         }
 

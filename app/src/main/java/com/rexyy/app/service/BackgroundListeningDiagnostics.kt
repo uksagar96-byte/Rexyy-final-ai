@@ -95,6 +95,62 @@ object BackgroundListeningDiagnostics {
         logEvent("RETURNING_TO_STANDBY", WakeWordState.RETURNING_TO_STANDBY)
     }
 
+    // Explicit Lifecycle Diagnostics for background path tracing (internal only)
+    fun recordServiceCreated() {
+        logEvent("SERVICE_CREATED", _currentListeningState.value)
+        android.util.Log.d("RexyyBackgroundDiag", "SERVICE_CREATED")
+    }
+
+    fun recordServiceStarted() {
+        logEvent("SERVICE_STARTED", _currentListeningState.value)
+        android.util.Log.d("RexyyBackgroundDiag", "SERVICE_STARTED")
+    }
+
+    fun recordServiceForeground() {
+        logEvent("SERVICE_FOREGROUND", _currentListeningState.value)
+        android.util.Log.d("RexyyBackgroundDiag", "SERVICE_FOREGROUND")
+    }
+
+    fun recordWakeEngineCreated() {
+        logEvent("WAKE_ENGINE_CREATED", _currentListeningState.value)
+        android.util.Log.d("RexyyBackgroundDiag", "WAKE_ENGINE_CREATED")
+    }
+
+    fun recordWakeEngineStarted() {
+        logEvent("WAKE_ENGINE_STARTED", _currentListeningState.value)
+        android.util.Log.d("RexyyBackgroundDiag", "WAKE_ENGINE_STARTED")
+    }
+
+    fun recordWakeEngineListening() {
+        logEvent("WAKE_ENGINE_LISTENING", _currentListeningState.value)
+        android.util.Log.d("RexyyBackgroundDiag", "WAKE_ENGINE_LISTENING")
+    }
+
+    fun recordMicRequested() {
+        logEvent("MIC_REQUESTED", _currentListeningState.value)
+        android.util.Log.d("RexyyBackgroundDiag", "MIC_REQUESTED")
+    }
+
+    fun recordMicActive() {
+        logEvent("MIC_ACTIVE", _currentListeningState.value)
+        android.util.Log.d("RexyyBackgroundDiag", "MIC_ACTIVE")
+    }
+
+    fun recordWakeEngineStopped() {
+        logEvent("WAKE_ENGINE_STOPPED", _currentListeningState.value)
+        android.util.Log.d("RexyyBackgroundDiag", "WAKE_ENGINE_STOPPED")
+    }
+
+    fun recordWakeEngineError(detail: String) {
+        logEvent("WAKE_ENGINE_ERROR", _currentListeningState.value, detail)
+        android.util.Log.d("RexyyBackgroundDiag", "WAKE_ENGINE_ERROR: $detail")
+    }
+
+    fun recordServiceDestroyed() {
+        logEvent("SERVICE_DESTROYED", _currentListeningState.value)
+        android.util.Log.d("RexyyBackgroundDiag", "SERVICE_DESTROYED")
+    }
+
     fun reset() {
         _currentListeningState.value = WakeWordState.WAKE_STANDBY
         _lastRecognizerEvent.value = "NONE"
