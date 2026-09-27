@@ -63,6 +63,13 @@ object NotificationPrivacyFilter {
             "Notification from $appName$titlePart"
         }
 
+        // Determine if title is a usable human name or if it's technical / generic metadata
+        val sender = if (!sensitive && cleanTitle.isNotBlank() && cleanTitle != appName && !isTechnicalOrInternal(cleanTitle)) {
+            cleanHumanSender(cleanTitle)
+        } else {
+            ""
+        }
+
         val speechAnnouncement = if (sensitive) {
             when (language) {
                 AppLanguage.HINDI -> "$appName से सिक्योरिटी अलर्ट आया है।"
@@ -72,22 +79,22 @@ object NotificationPrivacyFilter {
         } else {
             when (language) {
                 AppLanguage.HINDI -> {
-                    if (cleanTitle.isNotBlank() && cleanTitle != appName) {
-                        "$appName से $cleanTitle का नोटिफिकेशन आया है।"
+                    if (sender.isNotBlank()) {
+                        "$appName से $sender का नोटिफिकेशन आया है।"
                     } else {
                         "$appName से नया नोटिफिकेशन आया है।"
                     }
                 }
                 AppLanguage.ENGLISH -> {
-                    if (cleanTitle.isNotBlank() && cleanTitle != appName) {
-                        "Notification from $appName: $cleanTitle."
+                    if (sender.isNotBlank()) {
+                        "Notification from $appName: $sender."
                     } else {
                         "New notification from $appName."
                     }
                 }
                 AppLanguage.HINGLISH -> {
-                    if (cleanTitle.isNotBlank() && cleanTitle != appName) {
-                        "$appName se $cleanTitle ka notification aaya hai."
+                    if (sender.isNotBlank()) {
+                        "$appName se $sender ka notification aaya hai."
                     } else {
                         "$appName se new notification aaya hai."
                     }
@@ -97,11 +104,45 @@ object NotificationPrivacyFilter {
 
         return SanitizedNotification(
             isSensitive = sensitive,
-            sanitizedTitle = cleanTitle,
+            sanitizedTitle = if (sender.isNotBlank()) sender else cleanTitle,
             sanitizedText = cleanText,
             diagnosticSummary = diagnosticSummary,
             speechAnnouncement = speechAnnouncement
         )
+    }
+
+    /**
+     * Checks if a title string represents technical metadata, package names, URLs, or internal IDs.
+     */
+    private fun isTechnicalOrInternal(text: String): Boolean {
+        if (text.isBlank()) return true
+        val lower = text.lowercase().trim()
+        if (lower.startsWith("com.") || lower.startsWith("org.") || lower.startsWith("android.")) return true
+        if (lower.startsWith("http://") || lower.startsWith("https://")) return true
+        if (lower.matches(Regex("^[a-f0-9\\-_]{8,}$"))) return true
+        if (lower.matches(Regex("^\\d+$"))) return true
+        if (lower.endsWith(".jpg") || lower.endsWith(".png") || lower.endsWith(".mp4") || lower.endsWith(".tmp")) return true
+        if (lower.contains("null") || lower == "notification" || lower.endsWith("new notifications") || lower.endsWith("new messages")) return true
+        return false
+    }
+
+    /**
+     * Cleans social media usernames, handles, and separators for natural speech synthesis.
+     * E.g. "@priya_sharma_98" -> "Priya Sharma"
+     */
+    private fun cleanHumanSender(raw: String): String {
+        var clean = raw.trim()
+        if (clean.startsWith("@")) {
+            clean = clean.substring(1)
+        }
+        // Replace underscores with spaces so TTS does not say "underscore"
+        clean = clean.replace("_", " ")
+        // Remove trailing numerical IDs if preceded by letters
+        clean = clean.replace(Regex("(?<=[a-zA-Z])\\s*\\d+$"), "").trim()
+        // If it's a simple single name, preserve it; otherwise capitalize cleanly
+        return clean.split(" ")
+            .filter { it.isNotBlank() }
+            .joinToString(" ") { it.replaceFirstChar { c -> c.uppercase() } }
     }
 
     private fun maskDigitsAndKeywords(input: String): String {

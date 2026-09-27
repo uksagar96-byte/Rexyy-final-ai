@@ -21,6 +21,11 @@ enum class WakeWordState {
     COMMAND_LISTENING,
 
     /**
+     * Spoken user command recognized.
+     */
+    COMMAND_RECOGNIZED,
+
+    /**
      * Parsing command text and routing to appropriate handler.
      */
     PROCESSING,
@@ -36,6 +41,11 @@ enum class WakeWordState {
     VERIFYING,
 
     /**
+     * Speaking natural audio response to user.
+     */
+    RESPONDING,
+
+    /**
      * Providing voice feedback and safely returning back to standby.
      */
     RETURNING_TO_STANDBY,
@@ -43,7 +53,12 @@ enum class WakeWordState {
     /**
      * Error state; triggers bounded exponential backoff recovery.
      */
-    ERROR
+    ERROR,
+
+    /**
+     * Microphone permission is not granted.
+     */
+    MICROPHONE_DISABLED
 }
 
 /**

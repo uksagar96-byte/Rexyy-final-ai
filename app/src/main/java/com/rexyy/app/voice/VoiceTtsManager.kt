@@ -195,6 +195,11 @@ class VoiceTtsManager(
             .replace("\\*(.*?)\\*".toRegex(), "$1")
             .replace("###?".toRegex(), "")
             .replace("\\[(.*?)\\]\\(.*?\\)".toRegex(), "$1")
+            // Ensure REXXY is pronounced naturally as "Rexxy" rather than spelled out "R-E-X-X-Y"
+            .replace("\\bREXXY's\\b".toRegex(), "Rexxy's")
+            .replace("\\bREXXY'S\\b".toRegex(), "Rexxy's")
+            .replace("\\bREXXY\\b".toRegex(), "Rexxy")
+            .replace("(?i)\\br[- ]?e[- ]?x[- ]?x[- ]?y\\b".toRegex(), "Rexxy")
             .trim()
 
         // If response is longer than 350 chars, take the first 1-2 sentences or paragraph

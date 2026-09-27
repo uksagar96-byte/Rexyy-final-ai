@@ -18,7 +18,7 @@ sealed class RexyyPillState {
         override val subtitle = "Listening for \"Hello Rex\""
     }
 
-    data class WakeDetected(val phrase: String = "Hello Rex") : RexyyPillState() {
+    data class WakeDetected(val phrase: String = "Hello REXXY") : RexyyPillState() {
         override val title = "Wake Detected"
         override val subtitle = "Yes, I'm listening..."
         override val isExpanded = true
@@ -51,6 +51,12 @@ sealed class RexyyPillState {
     data class Verifying(val verifyText: String = "Verifying...") : RexyyPillState() {
         override val title = "Verifying..."
         override val subtitle = verifyText
+        override val isExpanded = true
+    }
+
+    data class Responding(val responseText: String) : RexyyPillState() {
+        override val title = "REXXY"
+        override val subtitle = responseText
         override val isExpanded = true
     }
 

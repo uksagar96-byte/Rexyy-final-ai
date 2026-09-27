@@ -80,7 +80,7 @@ object DynamicPillManager {
         postState(RexyyPillState.WakeStandby)
     }
 
-    fun postWakeDetected(phrase: String = "Hello Rex") {
+    fun postWakeDetected(phrase: String = "Hello REXXY") {
         postState(RexyyPillState.WakeDetected(phrase))
     }
 
@@ -102,6 +102,10 @@ object DynamicPillManager {
 
     fun postVerifying(action: String) {
         postState(RexyyPillState.Verifying(action))
+    }
+
+    fun postResponding(speechText: String) {
+        postState(RexyyPillState.Responding(speechText))
     }
 
     /**

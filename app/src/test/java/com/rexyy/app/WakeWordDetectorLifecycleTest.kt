@@ -13,7 +13,7 @@ import org.junit.Test
 class WakeWordDetectorLifecycleTest {
 
     private val wakeWordPattern = Regex(
-        "^(hello|hey|hi|ok|suno)?\\s*(rex|rexyy)\\b",
+        """(?:\b(?:hello|hey|hi|ok|suno)\s+)?\b(?:rexxy|rexyy|rexy|rex|rexi|rexie)\b""",
         RegexOption.IGNORE_CASE
     )
 
@@ -31,11 +31,14 @@ class WakeWordDetectorLifecycleTest {
         val initial = BackgroundListeningDiagnostics.currentListeningState.value
         assertEquals(WakeWordState.WAKE_STANDBY, initial)
 
-        BackgroundListeningDiagnostics.logEvent("WAKE_DETECTED", WakeWordState.WAKE_DETECTED, "hello rex")
+        BackgroundListeningDiagnostics.logEvent("WAKE_DETECTED", WakeWordState.WAKE_DETECTED, "hello rexxy")
         assertEquals(WakeWordState.WAKE_DETECTED, BackgroundListeningDiagnostics.currentListeningState.value)
 
         BackgroundListeningDiagnostics.recordCommandListeningStarted()
         assertEquals(WakeWordState.COMMAND_LISTENING, BackgroundListeningDiagnostics.currentListeningState.value)
+
+        BackgroundListeningDiagnostics.logEvent("COMMAND_RECOGNIZED", WakeWordState.COMMAND_RECOGNIZED)
+        assertEquals(WakeWordState.COMMAND_RECOGNIZED, BackgroundListeningDiagnostics.currentListeningState.value)
 
         BackgroundListeningDiagnostics.logEvent("PROCESSING", WakeWordState.PROCESSING)
         assertEquals(WakeWordState.PROCESSING, BackgroundListeningDiagnostics.currentListeningState.value)
@@ -45,6 +48,9 @@ class WakeWordDetectorLifecycleTest {
 
         BackgroundListeningDiagnostics.logEvent("VERIFYING", WakeWordState.VERIFYING)
         assertEquals(WakeWordState.VERIFYING, BackgroundListeningDiagnostics.currentListeningState.value)
+
+        BackgroundListeningDiagnostics.logEvent("RESPONDING", WakeWordState.RESPONDING)
+        assertEquals(WakeWordState.RESPONDING, BackgroundListeningDiagnostics.currentListeningState.value)
 
         BackgroundListeningDiagnostics.recordReturningToStandby()
         assertEquals(WakeWordState.RETURNING_TO_STANDBY, BackgroundListeningDiagnostics.currentListeningState.value)
@@ -56,6 +62,11 @@ class WakeWordDetectorLifecycleTest {
     @Test
     fun testWakeWordDetectionAndCommandExtraction() {
         val testCases = listOf(
+            "Hello REXXY YouTube kholo" to Pair("Hello REXXY", "YouTube kholo"),
+            "hello rexxy" to Pair("hello rexxy", ""),
+            "hello rexy" to Pair("hello rexy", ""),
+            "hey rexxy" to Pair("hey rexxy", ""),
+            "hey rexy" to Pair("hey rexy", ""),
             "Hello Rex YouTube kholo" to Pair("Hello Rex", "YouTube kholo"),
             "hey rexyy Rahul ko call karo" to Pair("hey rexyy", "Rahul ko call karo"),
             "Rexyy battery kitni hai" to Pair("Rexyy", "battery kitni hai"),
@@ -164,5 +175,20 @@ class WakeWordDetectorLifecycleTest {
         assertEquals(2000L, computeBackoff(3))
         assertEquals(5000L, computeBackoff(4))
         assertEquals(5000L, computeBackoff(10))
+    }
+
+    @Test
+    fun testRexxyPronunciationSanitizer() {
+        fun cleanForSpeech(input: String): String {
+            return input
+                .replace("\\bREXXY's\\b".toRegex(), "Rexxy's")
+                .replace("\\bREXXY'S\\b".toRegex(), "Rexxy's")
+                .replace("\\bREXXY\\b".toRegex(), "Rexxy")
+                .replace("(?i)\\br[- ]?e[- ]?x[- ]?x[- ]?y\\b".toRegex(), "Rexxy")
+        }
+
+        assertEquals("Hello Rexxy", cleanForSpeech("Hello REXXY"))
+        assertEquals("Rexxy's assistant", cleanForSpeech("REXXY's assistant"))
+        assertEquals("I am Rexxy", cleanForSpeech("I am R-E-X-X-Y"))
     }
 }

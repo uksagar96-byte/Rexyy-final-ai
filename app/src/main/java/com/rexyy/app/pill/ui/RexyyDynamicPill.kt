@@ -308,6 +308,7 @@ private fun getAccentColorForState(state: RexyyPillState): Color {
         state is RexyyPillState.Processing -> Color(0xFF82B1FF)
         state is RexyyPillState.Executing -> Color(0xFF40C4FF)
         state is RexyyPillState.Verifying -> Color(0xFFFFD740) // Amber Yellow
+        state is RexyyPillState.Responding -> Color(0xFF00E5FF)
         state is RexyyPillState.Charging -> Color(0xFF69F0AE)
         state is RexyyPillState.Notification -> Color(0xFFFFAB40) // Soft Orange
         state is RexyyPillState.WhatsAppMessage -> Color(0xFF25D366) // WhatsApp Green
@@ -328,6 +329,7 @@ private fun getIconForState(state: RexyyPillState): ImageVector {
         is RexyyPillState.Processing -> Icons.Filled.Refresh
         is RexyyPillState.Executing -> Icons.Filled.PlayArrow
         is RexyyPillState.Verifying -> Icons.Filled.Refresh
+        is RexyyPillState.Responding -> Icons.Filled.Mic
         is RexyyPillState.Success -> Icons.Filled.CheckCircle
         is RexyyPillState.Error -> Icons.Filled.Error
         is RexyyPillState.WhatsAppMessage -> Icons.Filled.Sms

@@ -1,6 +1,7 @@
 package com.rexyy.app.pill
 
 import android.content.Context
+import android.content.Intent
 import android.graphics.PixelFormat
 import android.os.Build
 import android.os.Handler
@@ -18,7 +19,9 @@ import androidx.savedstate.SavedStateRegistry
 import androidx.savedstate.SavedStateRegistryController
 import androidx.savedstate.SavedStateRegistryOwner
 import androidx.savedstate.setViewTreeSavedStateRegistryOwner
+import com.rexyy.app.MainActivity
 import com.rexyy.app.pill.ui.RexyyDynamicPill
+import com.rexyy.app.ui.theme.RexyyTheme
 
 object DynamicPillOverlayManager {
 
@@ -104,7 +107,16 @@ object DynamicPillOverlayManager {
                     setViewTreeLifecycleOwner(owner)
                     setViewTreeSavedStateRegistryOwner(owner)
                     setContent {
-                        RexyyDynamicPill()
+                        RexyyTheme {
+                            RexyyDynamicPill(
+                                onPillClick = {
+                                    val intent = Intent(context, MainActivity::class.java).apply {
+                                        flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP
+                                    }
+                                    context.startActivity(intent)
+                                }
+                            )
+                        }
                     }
                 }
 

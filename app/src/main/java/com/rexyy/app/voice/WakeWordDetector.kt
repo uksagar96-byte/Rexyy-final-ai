@@ -105,6 +105,7 @@ class AndroidWakeWordDetector(
 
     private var consecutiveErrors = 0
     private var standbyLoopJob: Job? = null
+    private var wakeAlreadyTriggered = false
 
     private enum class Mode {
         STANDBY,
@@ -114,9 +115,9 @@ class AndroidWakeWordDetector(
     private var currentMode = Mode.STANDBY
 
     // Regex for detecting wake words
-    // Matches "hello rex", "hey rex", "hi rex", "ok rex", "suno rex", "rex", "rexyy", etc.
+    // Canonical: "Hello REXXY". Also accepts: hello rexxy, hello rexy, hey rexxy, hey rexy, suno rexxy, hi rexxy, ok rexxy, rexxy, rexyy, rexy, rex
     private val wakeWordPattern = Regex(
-        "^(hello|hey|hi|ok|suno)?\\s*(rex|rexyy)\\b",
+        """(?:\b(?:hello|hey|hi|ok|suno)\s+)?\b(?:rexxy|rexyy|rexy|rex|rexi|rexie)\b""",
         RegexOption.IGNORE_CASE
     )
 
@@ -187,10 +188,12 @@ class AndroidWakeWordDetector(
     private fun scheduleStandbyListening(delayMs: Long) {
         standbyLoopJob?.cancel()
         if (isDestroyed || !isStandbyActive || isPausedForSpeaking) return
+        wakeAlreadyTriggered = false
 
         standbyLoopJob = scope.launch {
             delay(delayMs)
             if (isDestroyed || !isStandbyActive || isPausedForSpeaking) return@launch
+            wakeAlreadyTriggered = false
             currentMode = Mode.STANDBY
             transitionState(WakeWordState.WAKE_STANDBY)
             startListeningInternal(Mode.STANDBY)
@@ -200,7 +203,7 @@ class AndroidWakeWordDetector(
     private fun startListeningInternal(mode: Mode) {
         if (isDestroyed) return
         if (ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
-            transitionState(WakeWordState.ERROR)
+            transitionState(WakeWordState.MICROPHONE_DISABLED)
             BackgroundListeningDiagnostics.recordRecognitionError(-1, "Permission RECORD_AUDIO not granted")
             return
         }
@@ -268,8 +271,6 @@ class AndroidWakeWordDetector(
             if (mode == Mode.STANDBY) {
                 // Standby: lightweight, max 1-2 results, fast return
                 putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 2)
-                // Prefer offline recognition if available for speed and zero audio beep
-                putExtra(RecognizerIntent.EXTRA_PREFER_OFFLINE, true)
                 putExtra(RecognizerIntent.EXTRA_LANGUAGE, "en-US")
                 putExtra("android.speech.extra.EXTRA_ADDITIONAL_LANGUAGES", arrayOf("hi-IN", "en-IN"))
             } else {
@@ -400,6 +401,9 @@ class AndroidWakeWordDetector(
     }
 
     private fun triggerWakeDetected(rawSpeech: String, match: MatchResult) {
+        if (wakeAlreadyTriggered) return
+        wakeAlreadyTriggered = true
+
         standbyLoopJob?.cancel()
         consecutiveErrors = 0
 
