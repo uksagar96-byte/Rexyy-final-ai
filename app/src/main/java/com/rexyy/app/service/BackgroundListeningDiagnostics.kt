@@ -191,14 +191,11 @@ object BackgroundListeningDiagnostics {
     }
 
     fun recordRecognitionResult(result: String) {
-        _lastRecognitionResult.value = sanitizeForPrivacy(result)
-        logEvent("RECOGNITION_RESULT", _currentListeningState.value, detail = result, component = "AndroidWakeWordDetector", contextType = "ServiceContext")
+        recordSpeechRecognizerResult(result)
     }
 
     fun recordRecognitionError(errorCode: Int, description: String) {
-        _lastRecognitionError.value = errorCode
-        _lastErrorDescription.value = description
-        logEvent("RECOGNITION_ERROR", _currentListeningState.value, detail = description, component = "AndroidWakeWordDetector", contextType = "ServiceContext")
+        recordSpeechRecognizerError(errorCode, description)
     }
 
     fun recordRecoveryAttempt(attemptCount: Int) {
