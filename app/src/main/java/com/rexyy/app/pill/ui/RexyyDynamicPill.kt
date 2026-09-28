@@ -335,6 +335,8 @@ private fun getAccentColorForState(state: RexyyPillState): Color {
         state is RexyyPillState.Call -> Color(0xFF00E676)
         state is RexyyPillState.Sms -> Color(0xFF448AFF)
         state is RexyyPillState.MicrophoneDisabled -> Color(0xFFFF5252)
+        state is RexyyPillState.MicrophoneUnavailable -> Color(0xFFFF5252)
+        state is RexyyPillState.Reconnecting -> Color(0xFFFFAB40)
         else -> RexyyCyanPrimary
     }
 }
@@ -359,6 +361,8 @@ private fun getIconForState(state: RexyyPillState): ImageVector {
         is RexyyPillState.Charging -> Icons.Filled.BatteryChargingFull
         is RexyyPillState.Network -> if (state.isConnected) Icons.Filled.Wifi else Icons.Filled.WifiOff
         is RexyyPillState.MicrophoneDisabled -> Icons.Filled.MicOff
+        is RexyyPillState.MicrophoneUnavailable -> Icons.Filled.MicOff
+        is RexyyPillState.Reconnecting -> Icons.Filled.Refresh
         is RexyyPillState.SystemForeground -> Icons.Filled.PlayArrow
     }
 }

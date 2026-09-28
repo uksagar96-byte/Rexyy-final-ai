@@ -18,6 +18,25 @@ sealed class RexyyPillState {
         override val subtitle = "Listening for \"Hello Rex\""
     }
 
+    data object Reconnecting : RexyyPillState() {
+        override val title = "REXXY"
+        override val subtitle = "Reconnecting"
+    }
+
+    data object MicrophoneUnavailable : RexyyPillState() {
+        override val title = "REXXY"
+        override val subtitle = "Microphone unavailable"
+        override val isExpanded = true
+        override val isError = true
+    }
+
+    data object MicrophoneDisabled : RexyyPillState() {
+        override val title = "Mic Disabled"
+        override val subtitle = "Microphone access is disabled"
+        override val isExpanded = true
+        override val isError = true
+    }
+
     data class WakeDetected(val phrase: String = "Hello REXXY") : RexyyPillState() {
         override val title = "Wake Detected"
         override val subtitle = "Yes, I'm listening..."
@@ -110,13 +129,6 @@ sealed class RexyyPillState {
         override val subtitle = if (isConnected) "Connected" else "Network disconnected"
         override val isExpanded = true
         override val isError = !isConnected
-    }
-
-    data object MicrophoneDisabled : RexyyPillState() {
-        override val title = "Mic Disabled"
-        override val subtitle = "Microphone access is disabled"
-        override val isExpanded = true
-        override val isError = true
     }
 
     data object SystemForeground : RexyyPillState() {

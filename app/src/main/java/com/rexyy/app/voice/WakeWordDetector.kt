@@ -44,37 +44,14 @@ enum class RecognitionLifecycleState {
  * Listener callbacks for WakeWordDetector events.
  */
 interface WakeWordListener {
-    /**
-     * Called when the wake word is detected.
-     * @param phrase The recognized wake phrase (e.g., "hello rex")
-     * @param inlineCommand Any command spoken in the same breath (e.g., "YouTube kholo")
-     */
     fun onWakeWordDetected(phrase: String, inlineCommand: String?)
-
-    /**
-     * Called when a full voice command is recognized during COMMAND_LISTENING.
-     */
     fun onCommandRecognized(command: String)
-
-    /**
-     * Called when partial speech is recognized during COMMAND_LISTENING.
-     */
     fun onPartialCommandRecognized(partialText: String) {}
-
-    /**
-     * Called when command listening times out without speech.
-     */
     fun onCommandTimeout()
-
-    /**
-     * Called when an unrecoverable recognition error occurs.
-     */
     fun onError(errorCode: Int, message: String)
-
-    /**
-     * Called when an immediate stop phrase is uttered (e.g., "stop", "ruko").
-     */
     fun onStopInterrupt()
+    fun onMicReady() {}
+    fun onMicSessionFailed(errorCode: Int, message: String) {}
 }
 
 /**
@@ -103,14 +80,15 @@ interface WakeWordDetector {
 
 /**
  * Android implementation of WakeWordDetector using a single controlled SpeechRecognizer
- * instance, guarded recovery scheduler, sensible standby intervals, and strict lifecycle states.
+ * instance, guarded recovery scheduler, sensible standby intervals, on-device automatic fallback,
+ * and explicit microphone session lifecycle tracking.
  */
 class AndroidWakeWordDetector(
     private val context: Context
 ) : WakeWordDetector {
 
     companion object {
-        const val STANDBY_CYCLE_DELAY_MS = 1200L      // Sensible rest between standby listening cycles (prevents mic spam)
+        const val STANDBY_CYCLE_DELAY_MS = 1200L      // Sensible rest between standby listening cycles
         const val RESUME_AFTER_SPEAKING_DELAY_MS = 400L
         const val ERROR_BACKOFF_INITIAL_MS = 1500L
         const val ERROR_BACKOFF_MAX_MS = 5000L
@@ -136,6 +114,11 @@ class AndroidWakeWordDetector(
     private var recoveryJob: Job? = null
     private var isRecoveryScheduled = false
     private var wakeAlreadyTriggered = false
+
+    // Controlled on-device recognizer preference with automatic fallback
+    private val onDeviceAvailable = Build.VERSION.SDK_INT >= Build.VERSION_CODES.S &&
+            SpeechRecognizer.isOnDeviceRecognitionAvailable(context)
+    private var onDeviceFailed = false
 
     val recognizerId: String
         get() = speechRecognizer?.let { "Rec#${System.identityHashCode(it)}" } ?: "Rec#None"
@@ -201,7 +184,6 @@ class AndroidWakeWordDetector(
         currentMode = Mode.STANDBY
         transitionState(WakeWordState.WAKE_STANDBY)
 
-        // Only schedule listening if not already starting or listening
         val curState = _recognitionLifecycleState.value
         if (curState != RecognitionLifecycleState.STARTING && curState != RecognitionLifecycleState.LISTENING) {
             scheduleGuardedRecovery(100L, "startStandby")
@@ -217,7 +199,6 @@ class AndroidWakeWordDetector(
         transitionState(WakeWordState.COMMAND_LISTENING)
         BackgroundListeningDiagnostics.recordCommandListeningStarted()
 
-        // Clean any active session before starting command recognition
         cancelListeningInternal("switching_to_command")
         startListeningInternal(Mode.COMMAND, "user_command_mode")
     }
@@ -232,12 +213,14 @@ class AndroidWakeWordDetector(
     override fun resumeAfterSpeaking() {
         if (isDestroyed || !isStandbyActive) return
         isPausedForSpeaking = false
+        wakeAlreadyTriggered = false
         transitionState(WakeWordState.RETURNING_TO_STANDBY)
         scheduleGuardedRecovery(RESUME_AFTER_SPEAKING_DELAY_MS, "resumeAfterSpeaking")
     }
 
     override fun stop() {
         isStandbyActive = false
+        wakeAlreadyTriggered = false
         cancelGuardedRecovery("stop")
         cancelListeningInternal("stop")
         transitionRecognitionState(RecognitionLifecycleState.IDLE, "stop")
@@ -247,6 +230,7 @@ class AndroidWakeWordDetector(
     override fun destroy() {
         isDestroyed = true
         isStandbyActive = false
+        wakeAlreadyTriggered = false
         cancelGuardedRecovery("destroy")
         scope.cancel()
 
@@ -255,17 +239,11 @@ class AndroidWakeWordDetector(
         }
     }
 
-    /**
-     * Single guarded recovery scheduler (Section 5 Requirement).
-     * Guarantees exactly ONE scheduled recovery at a time.
-     * Prevents callback cascades from multiplying restarts.
-     */
     private fun scheduleGuardedRecovery(delayMs: Long, reason: String) {
         if (isDestroyed || !isStandbyActive || isPausedForSpeaking) return
         if (currentMode != Mode.STANDBY) return
 
         if (isRecoveryScheduled) {
-            // Drop duplicate scheduling attempt: one recovery is already safely pending
             return
         }
 
@@ -296,6 +274,7 @@ class AndroidWakeWordDetector(
         if (ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
             transitionState(WakeWordState.MICROPHONE_DISABLED)
             transitionRecognitionState(RecognitionLifecycleState.IDLE, "no_mic_permission")
+            DynamicPillManager.postMicrophoneDisabled()
             BackgroundListeningDiagnostics.recordRecognitionError(-1, "Permission RECORD_AUDIO not granted")
             cancelGuardedRecovery("no_mic_permission")
             return
@@ -305,7 +284,7 @@ class AndroidWakeWordDetector(
             if (isDestroyed || isPausedForSpeaking) return@post
             if (mode == Mode.STANDBY && !isStandbyActive) return@post
 
-            // Strict duplicate start prevention (Section 4 Requirement)
+            // Strict duplicate start prevention
             val curState = _recognitionLifecycleState.value
             if (curState == RecognitionLifecycleState.STARTING || curState == RecognitionLifecycleState.LISTENING) {
                 BackgroundListeningDiagnostics.logEvent(
@@ -330,6 +309,11 @@ class AndroidWakeWordDetector(
                     isScheduled = isRecoveryScheduled
                 )
                 BackgroundListeningDiagnostics.recordMicRequested()
+                BackgroundListeningDiagnostics.recordMicSessionRequested(id, reason)
+
+                val useOnDevice = onDeviceAvailable && !onDeviceFailed
+                val recognizerType = if (useOnDevice) "OnDeviceSpeechRecognizer" else "StandardSpeechRecognizer"
+                BackgroundListeningDiagnostics.recordMicSessionStarting(id, recognizerType)
 
                 val intent = createRecognizerIntent(mode)
                 speechRecognizer?.startListening(intent)
@@ -345,6 +329,8 @@ class AndroidWakeWordDetector(
                     BackgroundListeningDiagnostics.recordWakeEngineListening()
                 }
             } catch (e: Exception) {
+                val id = recognizerId
+                BackgroundListeningDiagnostics.recordMicSessionFailed(id, SpeechRecognizer.ERROR_CLIENT, "startListening exception: ${e.message}")
                 transitionRecognitionState(RecognitionLifecycleState.STOPPING, "start_exception")
                 handleErrorInternal(SpeechRecognizer.ERROR_CLIENT, "startListening exception: ${e.message}")
             }
@@ -353,15 +339,29 @@ class AndroidWakeWordDetector(
 
     private fun ensureRecognizer() {
         if (speechRecognizer == null) {
-            val useOnDevice = Build.VERSION.SDK_INT >= Build.VERSION_CODES.S &&
-                    SpeechRecognizer.isOnDeviceRecognitionAvailable(context)
+            val useOnDevice = onDeviceAvailable && !onDeviceFailed
             val recognizerType = if (useOnDevice) "OnDeviceSpeechRecognizer" else "StandardSpeechRecognizer"
 
-            speechRecognizer = if (useOnDevice) {
-                SpeechRecognizer.createOnDeviceSpeechRecognizer(context)
-            } else {
-                SpeechRecognizer.createSpeechRecognizer(context)
+            speechRecognizer = try {
+                if (useOnDevice) {
+                    SpeechRecognizer.createOnDeviceSpeechRecognizer(context)
+                } else {
+                    SpeechRecognizer.createSpeechRecognizer(context)
+                }
+            } catch (e: Exception) {
+                if (useOnDevice) {
+                    BackgroundListeningDiagnostics.logEvent(
+                        "ON_DEVICE_CREATE_EXCEPTION_FALLING_BACK",
+                        detail = "OnDeviceSpeechRecognizer failed (${e.message}), using StandardSpeechRecognizer",
+                        component = "AndroidWakeWordDetector"
+                    )
+                    onDeviceFailed = true
+                    SpeechRecognizer.createSpeechRecognizer(context)
+                } else {
+                    throw e
+                }
             }
+
             val id = recognizerId
             BackgroundListeningDiagnostics.recordRecognizerCreate(id, recognizerType)
             speechRecognizer?.setRecognitionListener(createRecognitionListener())
@@ -376,6 +376,7 @@ class AndroidWakeWordDetector(
         BackgroundListeningDiagnostics.recordRecognizerCancel(id, reason)
         BackgroundListeningDiagnostics.recordSpeechRecognizerStopped()
         BackgroundListeningDiagnostics.recordMicReleased()
+        BackgroundListeningDiagnostics.recordMicSessionEnded(id, reason)
         transitionRecognitionState(RecognitionLifecycleState.STOPPING, reason)
     }
 
@@ -387,6 +388,7 @@ class AndroidWakeWordDetector(
         val id = recognizerId
         BackgroundListeningDiagnostics.recordRecognizerDestroy(id, reason)
         BackgroundListeningDiagnostics.recordSpeechRecognizerDestroyed()
+        BackgroundListeningDiagnostics.recordMicSessionEnded(id, reason)
         speechRecognizer = null
         transitionRecognitionState(RecognitionLifecycleState.DESTROYED, reason)
     }
@@ -400,21 +402,11 @@ class AndroidWakeWordDetector(
             putExtra(RecognizerIntent.EXTRA_CALLING_PACKAGE, context.packageName)
             putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
 
-            // Silent operation extras and offline preference
-            putExtra("android.speech.extra.DICTATION_MODE", true)
-            putExtra(RecognizerIntent.EXTRA_PREFER_OFFLINE, true)
-
+            // Standard supported extras without forcing offline-only mode
             if (mode == Mode.STANDBY) {
-                // Standby: extended silence intervals to prevent 1-second timeout spam
                 putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 2)
                 putExtra(RecognizerIntent.EXTRA_LANGUAGE, "en-US")
                 putExtra("android.speech.extra.EXTRA_ADDITIONAL_LANGUAGES", arrayOf("hi-IN", "en-IN"))
-                putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_MINIMUM_LENGTH_MILLIS, 5000L)
-                putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS, 2500L)
-                putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_POSSIBLY_COMPLETE_SILENCE_LENGTH_MILLIS, 2500L)
-                putExtra("android.speech.extras.SPEECH_INPUT_MINIMUM_LENGTH_MILLIS", 5000L)
-                putExtra("android.speech.extras.SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS", 2500L)
-                putExtra("android.speech.extras.SPEECH_INPUT_POSSIBLY_COMPLETE_SILENCE_LENGTH_MILLIS", 2500L)
             } else {
                 putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 3)
                 when (lang) {
@@ -443,25 +435,34 @@ class AndroidWakeWordDetector(
                 BackgroundListeningDiagnostics.recordRecognizerOnReady(id)
                 BackgroundListeningDiagnostics.recordSpeechRecognizerReady()
                 BackgroundListeningDiagnostics.recordMicActive()
+                BackgroundListeningDiagnostics.recordMicSessionReady(id)
+                BackgroundListeningDiagnostics.recordMicSessionActive(id)
                 consecutiveErrors = 0
+                listener?.onMicReady()
             }
 
             override fun onBeginningOfSpeech() {
                 val id = recognizerId
                 BackgroundListeningDiagnostics.recordRecognizerOnBeginning(id)
+                BackgroundListeningDiagnostics.recordMicSessionActive(id)
                 consecutiveErrors = 0
             }
 
-            override fun onRmsChanged(rmsdB: Float) {}
+            override fun onRmsChanged(rmsdB: Float) {
+                if (rmsdB > 0.5f) {
+                    BackgroundListeningDiagnostics.recordMicActive()
+                }
+            }
+
             override fun onBufferReceived(buffer: ByteArray?) {}
 
             override fun onEndOfSpeech() {
                 val id = recognizerId
                 BackgroundListeningDiagnostics.recordRecognizerOnEnd(id)
                 BackgroundListeningDiagnostics.recordMicReleased()
+                BackgroundListeningDiagnostics.recordMicSessionEnded(id, "EndOfSpeech")
                 transitionRecognitionState(RecognitionLifecycleState.STOPPING, "onEndOfSpeech")
 
-                // Guarded fallback watchdog in case neither onResults nor onError fires
                 if (currentMode == Mode.STANDBY && !isRecoveryScheduled && !wakeAlreadyTriggered) {
                     scheduleGuardedRecovery(STANDBY_CYCLE_DELAY_MS, "onEndOfSpeech_fallback")
                 }
@@ -471,7 +472,23 @@ class AndroidWakeWordDetector(
                 val id = recognizerId
                 val errorMsg = getErrorText(error)
                 BackgroundListeningDiagnostics.recordRecognizerOnError(id, error, errorMsg)
+                BackgroundListeningDiagnostics.recordMicSessionFailed(id, error, errorMsg)
                 transitionRecognitionState(RecognitionLifecycleState.STOPPING, "onError_$errorMsg")
+
+                // Controlled On-Device recognition fallback (Section 7 Requirement)
+                val usingOnDevice = onDeviceAvailable && !onDeviceFailed
+                if (usingOnDevice && error == SpeechRecognizer.ERROR_CLIENT) {
+                    BackgroundListeningDiagnostics.logEvent(
+                        "ON_DEVICE_FALLBACK_TO_STANDARD",
+                        detail = "On-device recognition failed with ERROR_CLIENT. Falling back to StandardSpeechRecognizer.",
+                        component = "AndroidWakeWordDetector"
+                    )
+                    onDeviceFailed = true
+                    destroyRecognizerInternal("on_device_fallback")
+                    scheduleGuardedRecovery(300L, "on_device_fallback")
+                    return
+                }
+
                 handleErrorInternal(error, errorMsg)
             }
 
@@ -512,7 +529,6 @@ class AndroidWakeWordDetector(
 
                 val lower = partial.lowercase().trim()
 
-                // Check for immediate stop interrupt in any mode
                 if (isInterruptPhrase(lower)) {
                     cancelListeningInternal("stop_interrupt")
                     listener?.onStopInterrupt()
@@ -527,7 +543,6 @@ class AndroidWakeWordDetector(
                 } else if (currentMode == Mode.STANDBY) {
                     val matchResult = wakeWordPattern.find(lower)
                     if (matchResult != null) {
-                        // Instant wake detection! Cancel standby listening immediately
                         cancelGuardedRecovery("wake_detected_in_partial")
                         wakeAlreadyTriggered = true
                         cancelListeningInternal("wake_detected_in_partial")
@@ -551,12 +566,10 @@ class AndroidWakeWordDetector(
         if (wakeAlreadyTriggered) return
 
         if (text.isBlank()) {
-            // Normal silence in standby: schedule guarded next cycle with sensible rest
             scheduleGuardedRecovery(STANDBY_CYCLE_DELAY_MS, "standby_silence")
             return
         }
 
-        // Check if any match contains wake word
         val candidates = if (allMatches.isNullOrEmpty()) listOf(text) else allMatches
         var detectedMatch: MatchResult? = null
         var detectedRaw = ""
@@ -575,7 +588,6 @@ class AndroidWakeWordDetector(
             cancelListeningInternal("wake_detected_in_results")
             triggerWakeDetected(detectedRaw, detectedMatch)
         } else {
-            // Speech detected but not wake word -> resume standby smoothly after rest
             scheduleGuardedRecovery(STANDBY_CYCLE_DELAY_MS, "standby_no_wake_match")
         }
     }
@@ -600,6 +612,7 @@ class AndroidWakeWordDetector(
     }
 
     private fun processCommandResults(text: String) {
+        wakeAlreadyTriggered = false
         if (text.isBlank()) {
             transitionState(WakeWordState.RETURNING_TO_STANDBY)
             listener?.onCommandTimeout()
@@ -611,21 +624,18 @@ class AndroidWakeWordDetector(
     }
 
     private fun handleErrorInternal(errorCode: Int, errorMsg: String) {
-        // If wake was already triggered or we are in COMMAND mode, do NOT let leftover
-        // standby cancellation errors reset us back to standby!
         if (wakeAlreadyTriggered) {
             return
         }
 
         if (currentMode == Mode.COMMAND) {
             consecutiveErrors = 0
+            wakeAlreadyTriggered = false
             transitionState(WakeWordState.RETURNING_TO_STANDBY)
             listener?.onCommandTimeout()
             return
         }
 
-        // Normal standby silence: ERROR_SPEECH_TIMEOUT (6) and ERROR_NO_MATCH (7)
-        // Must NOT be treated as failure loop (Section 6 Requirement)
         val isSilenceInStandby = currentMode == Mode.STANDBY && (
                 errorCode == SpeechRecognizer.ERROR_SPEECH_TIMEOUT ||
                         errorCode == SpeechRecognizer.ERROR_NO_MATCH
@@ -633,18 +643,22 @@ class AndroidWakeWordDetector(
 
         if (isSilenceInStandby) {
             consecutiveErrors = 0
-            // Controlled listening cycle with sensible rest (Section 6 Requirement)
             scheduleGuardedRecovery(STANDBY_CYCLE_DELAY_MS, "normal_standby_silence")
             return
         }
 
-        // Genuine or transient errors: ERROR_CLIENT (5), ERROR_RECOGNIZER_BUSY (8), ERROR_NETWORK (2), etc.
         consecutiveErrors++
         BackgroundListeningDiagnostics.recordSpeechRecognizerError(errorCode, errorMsg)
         BackgroundListeningDiagnostics.recordRecoveryAttempt(consecutiveErrors)
         BackgroundListeningDiagnostics.recordWakeEngineError("SpeechRecognizer error $errorCode ($errorMsg), attempt #$consecutiveErrors")
 
-        // Destroy recognizer only on persistent failures (5+ consecutive errors)
+        if (consecutiveErrors >= 3) {
+            DynamicPillManager.postMicrophoneUnavailable()
+            listener?.onMicSessionFailed(errorCode, errorMsg)
+        } else {
+            DynamicPillManager.postReconnecting()
+        }
+
         if (consecutiveErrors >= 5) {
             mainHandler.post {
                 destroyRecognizerInternal("consecutive_errors_exceeded")
@@ -653,7 +667,6 @@ class AndroidWakeWordDetector(
             cancelListeningInternal("transient_error_backoff")
         }
 
-        // Bounded exponential recovery
         val backoffMs = when (consecutiveErrors) {
             1 -> ERROR_BACKOFF_INITIAL_MS
             2 -> 3000L

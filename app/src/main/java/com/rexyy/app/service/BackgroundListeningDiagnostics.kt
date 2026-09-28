@@ -265,6 +265,83 @@ object BackgroundListeningDiagnostics {
         )
     }
 
+    // Explicit Microphone Session States (Section 2 Requirement)
+    fun recordMicSessionRequested(recognizerId: String, reason: String) {
+        logEvent(
+            "MIC_SESSION_REQUESTED",
+            _currentListeningState.value,
+            detail = "Requested session ($reason)",
+            component = "AndroidWakeWordDetector",
+            contextType = "ServiceContext",
+            recognizerInstanceId = recognizerId,
+            recognitionState = "STARTING",
+            reasonStart = reason
+        )
+    }
+
+    fun recordMicSessionStarting(recognizerId: String, recognizerType: String) {
+        logEvent(
+            "MIC_SESSION_STARTING",
+            _currentListeningState.value,
+            detail = "Recognizer starting ($recognizerType)",
+            component = "AndroidWakeWordDetector",
+            contextType = "ServiceContext",
+            recognizerInstanceId = recognizerId,
+            recognitionState = "STARTING"
+        )
+    }
+
+    fun recordMicSessionReady(recognizerId: String) {
+        logEvent(
+            "MIC_SESSION_READY",
+            _currentListeningState.value,
+            detail = "Audio hardware ready for speech",
+            component = "AndroidWakeWordDetector",
+            contextType = "ServiceContext",
+            recognizerInstanceId = recognizerId,
+            recognitionState = "LISTENING"
+        )
+    }
+
+    fun recordMicSessionActive(recognizerId: String) {
+        logEvent(
+            "MIC_SESSION_ACTIVE",
+            _currentListeningState.value,
+            detail = "Active microphone capture confirmed by audio lifecycle",
+            component = "AndroidWakeWordDetector",
+            contextType = "ServiceContext",
+            recognizerInstanceId = recognizerId,
+            recognitionState = "LISTENING"
+        )
+    }
+
+    fun recordMicSessionEnded(recognizerId: String, reason: String) {
+        logEvent(
+            "MIC_SESSION_ENDED",
+            _currentListeningState.value,
+            detail = "Session ended ($reason)",
+            component = "AndroidWakeWordDetector",
+            contextType = "ServiceContext",
+            recognizerInstanceId = recognizerId,
+            recognitionState = "STOPPING",
+            reasonStop = reason
+        )
+    }
+
+    fun recordMicSessionFailed(recognizerId: String, errorCode: Int, errorMsg: String) {
+        logEvent(
+            "MIC_SESSION_FAILED",
+            _currentListeningState.value,
+            detail = "Session failed: Code $errorCode ($errorMsg)",
+            component = "AndroidWakeWordDetector",
+            contextType = "ServiceContext",
+            recognizerInstanceId = recognizerId,
+            recognitionState = "STOPPING",
+            errorCode = errorCode,
+            reasonStop = errorMsg
+        )
+    }
+
     // Wake Engine Lifecycle Diagnostics
     fun recordWakeEngineCreated() {
         logEvent("WAKE_ENGINE_CREATED", _currentListeningState.value, component = "AndroidWakeWordDetector", contextType = "ServiceContext")

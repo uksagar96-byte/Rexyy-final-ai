@@ -122,6 +122,12 @@ class RexyyBackgroundAssistantService : Service(), WakeWordListener {
         activeServiceInstance = java.lang.ref.WeakReference(this)
 
         BackgroundListeningDiagnostics.recordServiceCreated(serviceInstanceId)
+        BackgroundListeningDiagnostics.logEvent(
+            "DEVICE_TELEMETRY",
+            detail = "Manufacturer: ${Build.MANUFACTURER}, Model: ${Build.MODEL}, Android: ${Build.VERSION.RELEASE}, API: ${Build.VERSION.SDK_INT}",
+            component = "RexyyBackgroundAssistantService",
+            serviceInstanceId = serviceInstanceId
+        )
         createNotificationChannel()
         startForegroundWithMicrophone()
         BackgroundListeningDiagnostics.recordServiceForeground(serviceInstanceId)
@@ -159,10 +165,11 @@ class RexyyBackgroundAssistantService : Service(), WakeWordListener {
         if (!hasMic) {
             syncState(WakeWordState.MICROPHONE_DISABLED)
             DynamicPillManager.postMicrophoneDisabled()
+            updateNotification("REXYY Paused", "Microphone permission required")
         } else {
-            BackgroundListeningDiagnostics.recordMicActive()
             syncState(WakeWordState.WAKE_STANDBY)
-            DynamicPillManager.postWakeStandby()
+            DynamicPillManager.postReconnecting()
+            updateNotification("REXYY Active", "Starting voice engine...")
         }
 
         if (DynamicPillOverlayManager.canDrawOverlay(this)) {
@@ -189,7 +196,7 @@ class RexyyBackgroundAssistantService : Service(), WakeWordListener {
     }
 
     private fun startForegroundWithMicrophone() {
-        val notification = buildForegroundNotification("REXYY Active", "Listening for \"Hello Rex\"...")
+        val notification = buildForegroundNotification("REXYY Active", "Starting voice engine...")
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             ServiceCompat.startForeground(
                 this,
@@ -307,11 +314,29 @@ class RexyyBackgroundAssistantService : Service(), WakeWordListener {
         wakeWordDetector?.startStandby()
     }
 
+    override fun onMicReady() {
+        if (!isDestroyed && RexyyAssistantServiceState.serviceRunning.value &&
+            RexyyAssistantServiceState.currentState.value == WakeWordState.WAKE_STANDBY) {
+            BackgroundListeningDiagnostics.recordMicActive()
+            DynamicPillManager.postWakeStandby()
+            updateNotification("REXYY Active", "Listening for \"Hello REXXY\"...")
+        }
+    }
+
+    override fun onMicSessionFailed(errorCode: Int, message: String) {
+        if (!isDestroyed && RexyyAssistantServiceState.serviceRunning.value) {
+            BackgroundListeningDiagnostics.recordMicReleased()
+            DynamicPillManager.postMicrophoneUnavailable()
+            updateNotification("REXYY Paused", "Microphone unavailable")
+        }
+    }
+
     override fun onError(errorCode: Int, message: String) {
         // Handled with bounded recovery inside WakeWordDetector
         BackgroundListeningDiagnostics.recordWakeEngineError("Code: $errorCode, $message")
         if (RexyyAssistantServiceState.currentState.value == WakeWordState.WAKE_STANDBY) {
-            DynamicPillManager.postWakeStandby()
+            DynamicPillManager.postReconnecting()
+            updateNotification("REXYY Active", "Reconnecting voice engine...")
         } else {
             syncState(WakeWordState.ERROR)
             DynamicPillManager.postError(message)

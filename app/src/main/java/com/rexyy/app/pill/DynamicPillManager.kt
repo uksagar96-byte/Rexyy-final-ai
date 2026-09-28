@@ -157,6 +157,14 @@ object DynamicPillManager {
         postState(RexyyPillState.MicrophoneDisabled)
     }
 
+    fun postMicrophoneUnavailable() {
+        postState(RexyyPillState.MicrophoneUnavailable)
+    }
+
+    fun postReconnecting() {
+        postState(RexyyPillState.Reconnecting)
+    }
+
     fun postSystemForeground() {
         baseState = RexyyPillState.SystemForeground
         postState(RexyyPillState.SystemForeground)
