@@ -14,21 +14,11 @@ object BackgroundAssistantManager {
     }
 
     fun canStartService(context: Context): Boolean {
-        val hasMic = ContextCompat.checkSelfPermission(
+        // RECORD_AUDIO is the essential permission for background voice service
+        return ContextCompat.checkSelfPermission(
             context,
             Manifest.permission.RECORD_AUDIO
         ) == PackageManager.PERMISSION_GRANTED
-
-        val hasNotification = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            ContextCompat.checkSelfPermission(
-                context,
-                Manifest.permission.POST_NOTIFICATIONS
-            ) == PackageManager.PERMISSION_GRANTED
-        } else {
-            true
-        }
-
-        return hasMic && hasNotification
     }
 
     fun startAssistant(context: Context): Boolean {

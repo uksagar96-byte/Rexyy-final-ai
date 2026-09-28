@@ -51,6 +51,7 @@ object DynamicPillManager {
         reversionJob = null
         _pillState.value = state
         _isExpanded.value = state.isExpanded
+        com.rexyy.app.service.BackgroundListeningDiagnostics.recordPillStateChanged(state.title, state.subtitle)
     }
 
     /**

@@ -4,6 +4,7 @@ import android.Manifest
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.os.Build
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
@@ -223,17 +224,18 @@ class AndroidWakeWordDetector(
         mainHandler.post {
             if (isDestroyed) return@post
 
-            // If a previous recognition session is still active, cancel it cleanly first
+            // If already actively listening, avoid duplicate competing starts
             if (isListeningActive) {
-                cancelListeningInternal()
+                return@post
             }
 
             try {
                 ensureRecognizer()
+                BackgroundListeningDiagnostics.recordMicRequested()
                 val intent = createRecognizerIntent(mode)
                 speechRecognizer?.startListening(intent)
                 isListeningActive = true
-                BackgroundListeningDiagnostics.recordRecognizerStarted()
+                BackgroundListeningDiagnostics.recordSpeechRecognizerStarted()
                 if (mode == Mode.STANDBY) {
                     BackgroundListeningDiagnostics.recordWakeEngineListening()
                 }
@@ -246,10 +248,16 @@ class AndroidWakeWordDetector(
 
     private fun ensureRecognizer() {
         if (speechRecognizer == null) {
-            speechRecognizer = SpeechRecognizer.createSpeechRecognizer(context).apply {
-                setRecognitionListener(createRecognitionListener())
+            val useOnDevice = Build.VERSION.SDK_INT >= Build.VERSION_CODES.S &&
+                    SpeechRecognizer.isOnDeviceRecognitionAvailable(context)
+            speechRecognizer = if (useOnDevice) {
+                BackgroundListeningDiagnostics.recordSpeechRecognizerCreated("OnDeviceSpeechRecognizer")
+                SpeechRecognizer.createOnDeviceSpeechRecognizer(context)
+            } else {
+                BackgroundListeningDiagnostics.recordSpeechRecognizerCreated("StandardSpeechRecognizer")
+                SpeechRecognizer.createSpeechRecognizer(context)
             }
-            BackgroundListeningDiagnostics.recordRecognizerCreated()
+            speechRecognizer?.setRecognitionListener(createRecognitionListener())
         }
     }
 
@@ -258,7 +266,8 @@ class AndroidWakeWordDetector(
             speechRecognizer?.cancel()
         } catch (_: Exception) {}
         isListeningActive = false
-        BackgroundListeningDiagnostics.recordRecognizerStopped()
+        BackgroundListeningDiagnostics.recordSpeechRecognizerStopped()
+        BackgroundListeningDiagnostics.recordMicReleased()
     }
 
     private fun destroyRecognizerInternal() {
@@ -268,7 +277,7 @@ class AndroidWakeWordDetector(
         } catch (_: Exception) {}
         speechRecognizer = null
         isListeningActive = false
-        BackgroundListeningDiagnostics.recordRecognizerDestroyed()
+        BackgroundListeningDiagnostics.recordSpeechRecognizerDestroyed()
     }
 
     private fun createRecognizerIntent(mode: Mode): Intent {
@@ -280,8 +289,9 @@ class AndroidWakeWordDetector(
             putExtra(RecognizerIntent.EXTRA_CALLING_PACKAGE, context.packageName)
             putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
 
-            // Silent operation extras to minimize OS audio artifacts
+            // Silent operation extras to minimize OS audio artifacts and support on-device background recognition
             putExtra("android.speech.extra.DICTATION_MODE", true)
+            putExtra(RecognizerIntent.EXTRA_PREFER_OFFLINE, true)
 
             if (mode == Mode.STANDBY) {
                 // Standby: lightweight, max 1-2 results, fast return
@@ -313,6 +323,8 @@ class AndroidWakeWordDetector(
         return object : RecognitionListener {
             override fun onReadyForSpeech(params: Bundle?) {
                 BackgroundListeningDiagnostics.logEvent("READY_FOR_SPEECH", _state.value)
+                BackgroundListeningDiagnostics.recordSpeechRecognizerReady()
+                BackgroundListeningDiagnostics.recordMicActive()
             }
 
             override fun onBeginningOfSpeech() {
@@ -329,11 +341,11 @@ class AndroidWakeWordDetector(
                 if (currentMode == Mode.STANDBY) {
                     speechWatchdogJob?.cancel()
                     speechWatchdogJob = scope.launch {
-                        delay(3500L)
+                        delay(1200L)
                         if (isStandbyActive && !isListeningActive && !wakeAlreadyTriggered && !isPausedForSpeaking) {
                             BackgroundListeningDiagnostics.logEvent("END_OF_SPEECH_WATCHDOG_RESTART", _state.value)
                             cancelListeningInternal()
-                            scheduleStandbyListening(200L)
+                            scheduleStandbyListening(150L)
                         }
                     }
                 }
@@ -354,6 +366,9 @@ class AndroidWakeWordDetector(
 
                 if (topMatch.isNotBlank()) {
                     BackgroundListeningDiagnostics.recordRecognitionResult(topMatch)
+                    if (currentMode == Mode.COMMAND) {
+                        BackgroundListeningDiagnostics.recordCommandRecognizedDiagnostic(topMatch)
+                    }
                 }
 
                 if (currentMode == Mode.STANDBY) {
@@ -480,7 +495,7 @@ class AndroidWakeWordDetector(
             // Silence must NOT permanently stop the assistant.
             // Bounded next cycle after brief rest.
             consecutiveErrors = 0
-            scheduleStandbyListening(250L)
+            scheduleStandbyListening(150L)
             return
         }
 
@@ -497,23 +512,27 @@ class AndroidWakeWordDetector(
 
         // Genuine or transient errors: ERROR_CLIENT (5), ERROR_RECOGNIZER_BUSY (8), ERROR_NETWORK (2), etc.
         consecutiveErrors++
-        BackgroundListeningDiagnostics.recordRecognitionError(errorCode, errorMsg)
+        BackgroundListeningDiagnostics.recordSpeechRecognizerError(errorCode, errorMsg)
         BackgroundListeningDiagnostics.recordRecoveryAttempt(consecutiveErrors)
+        BackgroundListeningDiagnostics.recordWakeEngineError("SpeechRecognizer error $errorCode ($errorMsg), attempt #$consecutiveErrors")
 
-        // If repeated errors occur or recognizer got stuck in client/busy error:
-        // Safely destroy and recreate instance to guarantee clean state.
-        if (consecutiveErrors >= 3 || errorCode == SpeechRecognizer.ERROR_CLIENT || errorCode == SpeechRecognizer.ERROR_RECOGNIZER_BUSY) {
+        // Only destroy recognizer on persistent failures (5+ consecutive errors)
+        // rather than tearing down IPC on transient client/busy glitches
+        if (consecutiveErrors >= 5) {
             mainHandler.post {
                 destroyRecognizerInternal()
             }
+        } else {
+            // Cancel current session cleanly without destroying the binder
+            cancelListeningInternal()
         }
 
-        // Bounded exponential recovery: 350ms -> 750ms -> 1500ms, capped at 3000ms.
+        // Bounded exponential recovery: 350ms -> 750ms -> 1200ms, capped at 2500ms.
         val backoffMs = when (consecutiveErrors) {
             1 -> 350L
             2 -> 750L
-            3 -> 1500L
-            else -> 3000L
+            3 -> 1200L
+            else -> 2500L
         }
 
         scheduleStandbyListening(backoffMs)

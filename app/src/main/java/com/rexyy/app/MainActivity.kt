@@ -32,23 +32,31 @@ class MainActivity : ComponentActivity() {
 
     override fun onStart() {
         super.onStart()
-        // When REXXY app is in the foreground, hide system window overlay to prevent double pill
-        DynamicPillOverlayManager.hideOverlay()
-    }
-
-    override fun onStop() {
-        super.onStop()
-        // When REXXY app is minimized or backgrounded:
-        // Ensure background assistant service is running if permissions are available
+        // Ensure background assistant service is active while app is in the FOREGROUND
         if (BackgroundAssistantManager.canStartService(this) &&
             !RexyyAssistantServiceState.serviceRunning.value
         ) {
             BackgroundAssistantManager.startAssistant(this)
         }
+        // When REXXY app is in the foreground, hide system window overlay to prevent double pill
+        DynamicPillOverlayManager.hideOverlay()
+    }
 
-        // Keep Dynamic Pill overlay visible over other apps
+    override fun onResume() {
+        super.onResume()
+        // Re-confirm service is armed while in foreground
+        if (BackgroundAssistantManager.canStartService(this) &&
+            !RexyyAssistantServiceState.serviceRunning.value
+        ) {
+            BackgroundAssistantManager.startAssistant(this)
+        }
+    }
+
+    override fun onStop() {
+        super.onStop()
+        // When REXXY app is minimized or backgrounded, show overlay using applicationContext
         if (RexyyAssistantServiceState.serviceRunning.value && DynamicPillOverlayManager.canDrawOverlay(this)) {
-            DynamicPillOverlayManager.showOverlay(this)
+            DynamicPillOverlayManager.showOverlay(applicationContext)
         }
     }
 }
