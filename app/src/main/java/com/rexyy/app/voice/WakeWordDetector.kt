@@ -27,7 +27,18 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import java.util.Locale
-import kotlin.math.min
+
+/**
+ * Recognition lifecycle states for enforcing a single authoritative recognizer session.
+ */
+enum class RecognitionLifecycleState {
+    IDLE,
+    STARTING,
+    LISTENING,
+    STOPPING,
+    RECOVERING,
+    DESTROYED
+}
 
 /**
  * Listener callbacks for WakeWordDetector events.
@@ -71,7 +82,9 @@ interface WakeWordListener {
  */
 interface WakeWordDetector {
     val state: StateFlow<WakeWordState>
+    val recognitionLifecycleState: StateFlow<RecognitionLifecycleState>
 
+    fun isListening(): Boolean
     fun startStandby()
     fun startCommandListening()
     fun pauseForSpeaking()
@@ -90,11 +103,18 @@ interface WakeWordDetector {
 
 /**
  * Android implementation of WakeWordDetector using a single controlled SpeechRecognizer
- * instance, bounded error recovery, silent standby, and explicit state machine.
+ * instance, guarded recovery scheduler, sensible standby intervals, and strict lifecycle states.
  */
 class AndroidWakeWordDetector(
     private val context: Context
 ) : WakeWordDetector {
+
+    companion object {
+        const val STANDBY_CYCLE_DELAY_MS = 1200L      // Sensible rest between standby listening cycles (prevents mic spam)
+        const val RESUME_AFTER_SPEAKING_DELAY_MS = 400L
+        const val ERROR_BACKOFF_INITIAL_MS = 1500L
+        const val ERROR_BACKOFF_MAX_MS = 5000L
+    }
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
     private val mainHandler = Handler(Looper.getMainLooper())
@@ -102,18 +122,23 @@ class AndroidWakeWordDetector(
     private val _state = MutableStateFlow(WakeWordState.WAKE_STANDBY)
     override val state: StateFlow<WakeWordState> = _state.asStateFlow()
 
+    private val _recognitionLifecycleState = MutableStateFlow(RecognitionLifecycleState.IDLE)
+    override val recognitionLifecycleState: StateFlow<RecognitionLifecycleState> = _recognitionLifecycleState.asStateFlow()
+
     private var listener: WakeWordListener? = null
 
     private var speechRecognizer: SpeechRecognizer? = null
-    private var isListeningActive = false
     private var isStandbyActive = false
     private var isDestroyed = false
     private var isPausedForSpeaking = false
 
     private var consecutiveErrors = 0
-    private var standbyLoopJob: Job? = null
-    private var speechWatchdogJob: Job? = null
+    private var recoveryJob: Job? = null
+    private var isRecoveryScheduled = false
     private var wakeAlreadyTriggered = false
+
+    val recognizerId: String
+        get() = speechRecognizer?.let { "Rec#${System.identityHashCode(it)}" } ?: "Rec#None"
 
     private enum class Mode {
         STANDBY,
@@ -133,13 +158,37 @@ class AndroidWakeWordDetector(
         "stop", "ruko", "ruk ja", "bas", "cancel", "chup", "chup raho", "shant"
     )
 
+    override fun isListening(): Boolean {
+        return _recognitionLifecycleState.value == RecognitionLifecycleState.LISTENING ||
+                _recognitionLifecycleState.value == RecognitionLifecycleState.STARTING
+    }
+
     override fun setListener(listener: WakeWordListener?) {
         this.listener = listener
     }
 
     override fun transitionState(newState: WakeWordState) {
         _state.value = newState
-        BackgroundListeningDiagnostics.logEvent("STATE_TRANSITION", newState)
+        BackgroundListeningDiagnostics.logEvent(
+            "STATE_TRANSITION",
+            newState,
+            recognizerInstanceId = recognizerId,
+            recognitionState = _recognitionLifecycleState.value.name
+        )
+    }
+
+    private fun transitionRecognitionState(newState: RecognitionLifecycleState, reason: String) {
+        _recognitionLifecycleState.value = newState
+        BackgroundListeningDiagnostics.logEvent(
+            "RECOGNITION_STATE_CHANGE",
+            state = _state.value,
+            detail = "Transition to ${newState.name} ($reason)",
+            recognizerInstanceId = recognizerId,
+            recognitionState = newState.name,
+            reasonStart = if (newState == RecognitionLifecycleState.STARTING) reason else null,
+            reasonStop = if (newState == RecognitionLifecycleState.STOPPING) reason else null,
+            isStartScheduled = isRecoveryScheduled
+        )
     }
 
     override fun startStandby() {
@@ -147,29 +196,36 @@ class AndroidWakeWordDetector(
         isStandbyActive = true
         isPausedForSpeaking = false
         wakeAlreadyTriggered = false
-        speechWatchdogJob?.cancel()
+        cancelGuardedRecovery("startStandby")
         consecutiveErrors = 0
         currentMode = Mode.STANDBY
         transitionState(WakeWordState.WAKE_STANDBY)
-        scheduleStandbyListening(100L)
+
+        // Only schedule listening if not already starting or listening
+        val curState = _recognitionLifecycleState.value
+        if (curState != RecognitionLifecycleState.STARTING && curState != RecognitionLifecycleState.LISTENING) {
+            scheduleGuardedRecovery(100L, "startStandby")
+        }
     }
 
     override fun startCommandListening() {
         if (isDestroyed) return
         isPausedForSpeaking = false
         wakeAlreadyTriggered = false
-        speechWatchdogJob?.cancel()
-        standbyLoopJob?.cancel()
+        cancelGuardedRecovery("startCommandListening")
         currentMode = Mode.COMMAND
         transitionState(WakeWordState.COMMAND_LISTENING)
         BackgroundListeningDiagnostics.recordCommandListeningStarted()
-        startListeningInternal(Mode.COMMAND)
+
+        // Clean any active session before starting command recognition
+        cancelListeningInternal("switching_to_command")
+        startListeningInternal(Mode.COMMAND, "user_command_mode")
     }
 
     override fun pauseForSpeaking() {
         isPausedForSpeaking = true
-        standbyLoopJob?.cancel()
-        cancelListeningInternal()
+        cancelGuardedRecovery("pauseForSpeaking")
+        cancelListeningInternal("pauseForSpeaking")
         transitionState(WakeWordState.RETURNING_TO_STANDBY)
     }
 
@@ -177,70 +233,119 @@ class AndroidWakeWordDetector(
         if (isDestroyed || !isStandbyActive) return
         isPausedForSpeaking = false
         transitionState(WakeWordState.RETURNING_TO_STANDBY)
-        scheduleStandbyListening(350L)
+        scheduleGuardedRecovery(RESUME_AFTER_SPEAKING_DELAY_MS, "resumeAfterSpeaking")
     }
 
     override fun stop() {
         isStandbyActive = false
-        standbyLoopJob?.cancel()
-        cancelListeningInternal()
+        cancelGuardedRecovery("stop")
+        cancelListeningInternal("stop")
+        transitionRecognitionState(RecognitionLifecycleState.IDLE, "stop")
         transitionState(WakeWordState.WAKE_STANDBY)
     }
 
     override fun destroy() {
         isDestroyed = true
         isStandbyActive = false
-        standbyLoopJob?.cancel()
+        cancelGuardedRecovery("destroy")
         scope.cancel()
 
         mainHandler.post {
-            destroyRecognizerInternal()
+            destroyRecognizerInternal("destroy")
         }
     }
 
-    private fun scheduleStandbyListening(delayMs: Long) {
-        standbyLoopJob?.cancel()
+    /**
+     * Single guarded recovery scheduler (Section 5 Requirement).
+     * Guarantees exactly ONE scheduled recovery at a time.
+     * Prevents callback cascades from multiplying restarts.
+     */
+    private fun scheduleGuardedRecovery(delayMs: Long, reason: String) {
         if (isDestroyed || !isStandbyActive || isPausedForSpeaking) return
-        wakeAlreadyTriggered = false
+        if (currentMode != Mode.STANDBY) return
 
-        standbyLoopJob = scope.launch {
+        if (isRecoveryScheduled) {
+            // Drop duplicate scheduling attempt: one recovery is already safely pending
+            return
+        }
+
+        isRecoveryScheduled = true
+        transitionRecognitionState(RecognitionLifecycleState.RECOVERING, reason)
+
+        recoveryJob?.cancel()
+        recoveryJob = scope.launch {
             delay(delayMs)
-            if (isDestroyed || !isStandbyActive || isPausedForSpeaking) return@launch
-            wakeAlreadyTriggered = false
-            currentMode = Mode.STANDBY
-            transitionState(WakeWordState.WAKE_STANDBY)
-            startListeningInternal(Mode.STANDBY)
+            isRecoveryScheduled = false
+            if (isDestroyed || !isStandbyActive || isPausedForSpeaking || currentMode != Mode.STANDBY) {
+                return@launch
+            }
+            startListeningInternal(Mode.STANDBY, "guarded_recovery_after_$reason")
         }
     }
 
-    private fun startListeningInternal(mode: Mode) {
-        if (isDestroyed) return
+    private fun cancelGuardedRecovery(reason: String) {
+        isRecoveryScheduled = false
+        recoveryJob?.cancel()
+        recoveryJob = null
+    }
+
+    private fun startListeningInternal(mode: Mode, reason: String) {
+        if (isDestroyed || isPausedForSpeaking) return
+        if (mode == Mode.STANDBY && !isStandbyActive) return
+
         if (ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
             transitionState(WakeWordState.MICROPHONE_DISABLED)
+            transitionRecognitionState(RecognitionLifecycleState.IDLE, "no_mic_permission")
             BackgroundListeningDiagnostics.recordRecognitionError(-1, "Permission RECORD_AUDIO not granted")
+            cancelGuardedRecovery("no_mic_permission")
             return
         }
 
         mainHandler.post {
-            if (isDestroyed) return@post
+            if (isDestroyed || isPausedForSpeaking) return@post
+            if (mode == Mode.STANDBY && !isStandbyActive) return@post
 
-            // If already actively listening, avoid duplicate competing starts
-            if (isListeningActive) {
+            // Strict duplicate start prevention (Section 4 Requirement)
+            val curState = _recognitionLifecycleState.value
+            if (curState == RecognitionLifecycleState.STARTING || curState == RecognitionLifecycleState.LISTENING) {
+                BackgroundListeningDiagnostics.logEvent(
+                    "RECOGNIZER_START_REJECTED",
+                    state = _state.value,
+                    detail = "Already in $curState, rejected start (reason: $reason)",
+                    recognizerInstanceId = recognizerId,
+                    recognitionState = curState.name
+                )
                 return@post
             }
 
             try {
                 ensureRecognizer()
+                transitionRecognitionState(RecognitionLifecycleState.STARTING, reason)
+
+                val id = recognizerId
+                BackgroundListeningDiagnostics.recordRecognizerStartRequest(
+                    recognizerId = id,
+                    reason = reason,
+                    mode = mode.name,
+                    isScheduled = isRecoveryScheduled
+                )
                 BackgroundListeningDiagnostics.recordMicRequested()
+
                 val intent = createRecognizerIntent(mode)
                 speechRecognizer?.startListening(intent)
-                isListeningActive = true
+
+                BackgroundListeningDiagnostics.recordRecognizerStartAccepted(
+                    recognizerId = id,
+                    reason = reason,
+                    mode = mode.name
+                )
                 BackgroundListeningDiagnostics.recordSpeechRecognizerStarted()
+
                 if (mode == Mode.STANDBY) {
                     BackgroundListeningDiagnostics.recordWakeEngineListening()
                 }
             } catch (e: Exception) {
-                isListeningActive = false
+                transitionRecognitionState(RecognitionLifecycleState.STOPPING, "start_exception")
                 handleErrorInternal(SpeechRecognizer.ERROR_CLIENT, "startListening exception: ${e.message}")
             }
         }
@@ -250,34 +355,40 @@ class AndroidWakeWordDetector(
         if (speechRecognizer == null) {
             val useOnDevice = Build.VERSION.SDK_INT >= Build.VERSION_CODES.S &&
                     SpeechRecognizer.isOnDeviceRecognitionAvailable(context)
+            val recognizerType = if (useOnDevice) "OnDeviceSpeechRecognizer" else "StandardSpeechRecognizer"
+
             speechRecognizer = if (useOnDevice) {
-                BackgroundListeningDiagnostics.recordSpeechRecognizerCreated("OnDeviceSpeechRecognizer")
                 SpeechRecognizer.createOnDeviceSpeechRecognizer(context)
             } else {
-                BackgroundListeningDiagnostics.recordSpeechRecognizerCreated("StandardSpeechRecognizer")
                 SpeechRecognizer.createSpeechRecognizer(context)
             }
+            val id = recognizerId
+            BackgroundListeningDiagnostics.recordRecognizerCreate(id, recognizerType)
             speechRecognizer?.setRecognitionListener(createRecognitionListener())
         }
     }
 
-    private fun cancelListeningInternal() {
+    private fun cancelListeningInternal(reason: String = "cancel") {
         try {
             speechRecognizer?.cancel()
         } catch (_: Exception) {}
-        isListeningActive = false
+        val id = recognizerId
+        BackgroundListeningDiagnostics.recordRecognizerCancel(id, reason)
         BackgroundListeningDiagnostics.recordSpeechRecognizerStopped()
         BackgroundListeningDiagnostics.recordMicReleased()
+        transitionRecognitionState(RecognitionLifecycleState.STOPPING, reason)
     }
 
-    private fun destroyRecognizerInternal() {
+    private fun destroyRecognizerInternal(reason: String = "destroy") {
         try {
             speechRecognizer?.cancel()
             speechRecognizer?.destroy()
         } catch (_: Exception) {}
-        speechRecognizer = null
-        isListeningActive = false
+        val id = recognizerId
+        BackgroundListeningDiagnostics.recordRecognizerDestroy(id, reason)
         BackgroundListeningDiagnostics.recordSpeechRecognizerDestroyed()
+        speechRecognizer = null
+        transitionRecognitionState(RecognitionLifecycleState.DESTROYED, reason)
     }
 
     private fun createRecognizerIntent(mode: Mode): Intent {
@@ -289,17 +400,22 @@ class AndroidWakeWordDetector(
             putExtra(RecognizerIntent.EXTRA_CALLING_PACKAGE, context.packageName)
             putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
 
-            // Silent operation extras to minimize OS audio artifacts and support on-device background recognition
+            // Silent operation extras and offline preference
             putExtra("android.speech.extra.DICTATION_MODE", true)
             putExtra(RecognizerIntent.EXTRA_PREFER_OFFLINE, true)
 
             if (mode == Mode.STANDBY) {
-                // Standby: lightweight, max 1-2 results, fast return
+                // Standby: extended silence intervals to prevent 1-second timeout spam
                 putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 2)
                 putExtra(RecognizerIntent.EXTRA_LANGUAGE, "en-US")
                 putExtra("android.speech.extra.EXTRA_ADDITIONAL_LANGUAGES", arrayOf("hi-IN", "en-IN"))
+                putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_MINIMUM_LENGTH_MILLIS, 5000L)
+                putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS, 2500L)
+                putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_POSSIBLY_COMPLETE_SILENCE_LENGTH_MILLIS, 2500L)
+                putExtra("android.speech.extras.SPEECH_INPUT_MINIMUM_LENGTH_MILLIS", 5000L)
+                putExtra("android.speech.extras.SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS", 2500L)
+                putExtra("android.speech.extras.SPEECH_INPUT_POSSIBLY_COMPLETE_SILENCE_LENGTH_MILLIS", 2500L)
             } else {
-                // Command mode: rich language support
                 putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 3)
                 when (lang) {
                     SecureStorage.VOICE_LANG_HI -> {
@@ -322,13 +438,17 @@ class AndroidWakeWordDetector(
     private fun createRecognitionListener(): RecognitionListener {
         return object : RecognitionListener {
             override fun onReadyForSpeech(params: Bundle?) {
-                BackgroundListeningDiagnostics.logEvent("READY_FOR_SPEECH", _state.value)
+                transitionRecognitionState(RecognitionLifecycleState.LISTENING, "onReadyForSpeech")
+                val id = recognizerId
+                BackgroundListeningDiagnostics.recordRecognizerOnReady(id)
                 BackgroundListeningDiagnostics.recordSpeechRecognizerReady()
                 BackgroundListeningDiagnostics.recordMicActive()
+                consecutiveErrors = 0
             }
 
             override fun onBeginningOfSpeech() {
-                BackgroundListeningDiagnostics.logEvent("BEGINNING_OF_SPEECH", _state.value)
+                val id = recognizerId
+                BackgroundListeningDiagnostics.recordRecognizerOnBeginning(id)
                 consecutiveErrors = 0
             }
 
@@ -336,33 +456,32 @@ class AndroidWakeWordDetector(
             override fun onBufferReceived(buffer: ByteArray?) {}
 
             override fun onEndOfSpeech() {
-                BackgroundListeningDiagnostics.logEvent("END_OF_SPEECH", _state.value)
-                isListeningActive = false
-                if (currentMode == Mode.STANDBY) {
-                    speechWatchdogJob?.cancel()
-                    speechWatchdogJob = scope.launch {
-                        delay(1200L)
-                        if (isStandbyActive && !isListeningActive && !wakeAlreadyTriggered && !isPausedForSpeaking) {
-                            BackgroundListeningDiagnostics.logEvent("END_OF_SPEECH_WATCHDOG_RESTART", _state.value)
-                            cancelListeningInternal()
-                            scheduleStandbyListening(150L)
-                        }
-                    }
+                val id = recognizerId
+                BackgroundListeningDiagnostics.recordRecognizerOnEnd(id)
+                BackgroundListeningDiagnostics.recordMicReleased()
+                transitionRecognitionState(RecognitionLifecycleState.STOPPING, "onEndOfSpeech")
+
+                // Guarded fallback watchdog in case neither onResults nor onError fires
+                if (currentMode == Mode.STANDBY && !isRecoveryScheduled && !wakeAlreadyTriggered) {
+                    scheduleGuardedRecovery(STANDBY_CYCLE_DELAY_MS, "onEndOfSpeech_fallback")
                 }
             }
 
             override fun onError(error: Int) {
-                speechWatchdogJob?.cancel()
-                isListeningActive = false
+                val id = recognizerId
                 val errorMsg = getErrorText(error)
+                BackgroundListeningDiagnostics.recordRecognizerOnError(id, error, errorMsg)
+                transitionRecognitionState(RecognitionLifecycleState.STOPPING, "onError_$errorMsg")
                 handleErrorInternal(error, errorMsg)
             }
 
             override fun onResults(results: Bundle?) {
-                speechWatchdogJob?.cancel()
-                isListeningActive = false
+                val id = recognizerId
                 val matches = results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
                 val topMatch = matches?.firstOrNull()?.trim() ?: ""
+
+                BackgroundListeningDiagnostics.recordRecognizerOnResults(id, topMatch)
+                transitionRecognitionState(RecognitionLifecycleState.IDLE, "onResults")
 
                 if (topMatch.isNotBlank()) {
                     BackgroundListeningDiagnostics.recordRecognitionResult(topMatch)
@@ -388,16 +507,18 @@ class AndroidWakeWordDetector(
                 val partial = matches?.firstOrNull()?.trim() ?: ""
                 if (partial.isBlank()) return
 
+                val id = recognizerId
+                BackgroundListeningDiagnostics.recordRecognizerOnPartial(id, partial)
+
                 val lower = partial.lowercase().trim()
 
                 // Check for immediate stop interrupt in any mode
                 if (isInterruptPhrase(lower)) {
-                    cancelListeningInternal()
+                    cancelListeningInternal("stop_interrupt")
                     listener?.onStopInterrupt()
                     return
                 }
 
-                // In command mode, update live speech immediately
                 if (currentMode == Mode.COMMAND) {
                     mainHandler.post {
                         listener?.onPartialCommandRecognized(partial)
@@ -406,8 +527,10 @@ class AndroidWakeWordDetector(
                 } else if (currentMode == Mode.STANDBY) {
                     val matchResult = wakeWordPattern.find(lower)
                     if (matchResult != null) {
-                        // Immediate wake word detection! Cancel standby listening immediately
-                        cancelListeningInternal()
+                        // Instant wake detection! Cancel standby listening immediately
+                        cancelGuardedRecovery("wake_detected_in_partial")
+                        wakeAlreadyTriggered = true
+                        cancelListeningInternal("wake_detected_in_partial")
                         triggerWakeDetected(partial, matchResult)
                     }
                 }
@@ -425,9 +548,11 @@ class AndroidWakeWordDetector(
     }
 
     private fun processStandbyResults(text: String, allMatches: List<String>?) {
+        if (wakeAlreadyTriggered) return
+
         if (text.isBlank()) {
-            // Normal silence in standby -> continue standby loop
-            scheduleStandbyListening(250L)
+            // Normal silence in standby: schedule guarded next cycle with sensible rest
+            scheduleGuardedRecovery(STANDBY_CYCLE_DELAY_MS, "standby_silence")
             return
         }
 
@@ -446,10 +571,12 @@ class AndroidWakeWordDetector(
         }
 
         if (detectedMatch != null) {
+            cancelGuardedRecovery("wake_detected_in_results")
+            cancelListeningInternal("wake_detected_in_results")
             triggerWakeDetected(detectedRaw, detectedMatch)
         } else {
-            // Speech detected but not wake word -> resume standby smoothly
-            scheduleStandbyListening(250L)
+            // Speech detected but not wake word -> resume standby smoothly after rest
+            scheduleGuardedRecovery(STANDBY_CYCLE_DELAY_MS, "standby_no_wake_match")
         }
     }
 
@@ -457,7 +584,7 @@ class AndroidWakeWordDetector(
         if (wakeAlreadyTriggered) return
         wakeAlreadyTriggered = true
 
-        standbyLoopJob?.cancel()
+        cancelGuardedRecovery("triggerWakeDetected")
         consecutiveErrors = 0
 
         val wakePhrase = match.value
@@ -484,29 +611,30 @@ class AndroidWakeWordDetector(
     }
 
     private fun handleErrorInternal(errorCode: Int, errorMsg: String) {
-        // ERROR_SPEECH_TIMEOUT (6) and ERROR_NO_MATCH (7) are expected and normal
-        // in background standby when silence occurs.
+        // If wake was already triggered or we are in COMMAND mode, do NOT let leftover
+        // standby cancellation errors reset us back to standby!
+        if (wakeAlreadyTriggered) {
+            return
+        }
+
+        if (currentMode == Mode.COMMAND) {
+            consecutiveErrors = 0
+            transitionState(WakeWordState.RETURNING_TO_STANDBY)
+            listener?.onCommandTimeout()
+            return
+        }
+
+        // Normal standby silence: ERROR_SPEECH_TIMEOUT (6) and ERROR_NO_MATCH (7)
+        // Must NOT be treated as failure loop (Section 6 Requirement)
         val isSilenceInStandby = currentMode == Mode.STANDBY && (
                 errorCode == SpeechRecognizer.ERROR_SPEECH_TIMEOUT ||
                         errorCode == SpeechRecognizer.ERROR_NO_MATCH
                 )
 
         if (isSilenceInStandby) {
-            // Silence must NOT permanently stop the assistant.
-            // Bounded next cycle after brief rest.
             consecutiveErrors = 0
-            scheduleStandbyListening(150L)
-            return
-        }
-
-        if (currentMode == Mode.COMMAND && (
-                    errorCode == SpeechRecognizer.ERROR_SPEECH_TIMEOUT ||
-                            errorCode == SpeechRecognizer.ERROR_NO_MATCH
-                    )) {
-            // In command listening, timeout means user didn't speak a command.
-            consecutiveErrors = 0
-            transitionState(WakeWordState.RETURNING_TO_STANDBY)
-            listener?.onCommandTimeout()
+            // Controlled listening cycle with sensible rest (Section 6 Requirement)
+            scheduleGuardedRecovery(STANDBY_CYCLE_DELAY_MS, "normal_standby_silence")
             return
         }
 
@@ -516,33 +644,24 @@ class AndroidWakeWordDetector(
         BackgroundListeningDiagnostics.recordRecoveryAttempt(consecutiveErrors)
         BackgroundListeningDiagnostics.recordWakeEngineError("SpeechRecognizer error $errorCode ($errorMsg), attempt #$consecutiveErrors")
 
-        // Only destroy recognizer on persistent failures (5+ consecutive errors)
-        // rather than tearing down IPC on transient client/busy glitches
+        // Destroy recognizer only on persistent failures (5+ consecutive errors)
         if (consecutiveErrors >= 5) {
             mainHandler.post {
-                destroyRecognizerInternal()
+                destroyRecognizerInternal("consecutive_errors_exceeded")
             }
         } else {
-            // Cancel current session cleanly without destroying the binder
-            cancelListeningInternal()
+            cancelListeningInternal("transient_error_backoff")
         }
 
-        // Bounded exponential recovery: 350ms -> 750ms -> 1200ms, capped at 2500ms.
+        // Bounded exponential recovery
         val backoffMs = when (consecutiveErrors) {
-            1 -> 350L
-            2 -> 750L
-            3 -> 1200L
-            else -> 2500L
+            1 -> ERROR_BACKOFF_INITIAL_MS
+            2 -> 3000L
+            else -> ERROR_BACKOFF_MAX_MS
         }
 
-        scheduleStandbyListening(backoffMs)
-        if (currentMode == Mode.COMMAND) {
-            transitionState(WakeWordState.ERROR)
-            listener?.onError(errorCode, errorMsg)
-        } else {
-            // Keep state in WAKE_STANDBY so standby continues silently
-            transitionState(WakeWordState.WAKE_STANDBY)
-        }
+        scheduleGuardedRecovery(backoffMs, "error_backoff_$errorCode")
+        transitionState(WakeWordState.WAKE_STANDBY)
     }
 
     private fun getErrorText(errorCode: Int): String {

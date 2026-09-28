@@ -96,16 +96,35 @@ class RexyyBackgroundAssistantService : Service(), WakeWordListener {
         const val NOTIFICATION_ID = 9001
         const val ACTION_STOP_SERVICE = "com.rexyy.app.action.STOP_ASSISTANT_SERVICE"
         const val ACTION_START_SERVICE = "com.rexyy.app.action.START_ASSISTANT_SERVICE"
+
+        @Volatile
+        private var activeServiceInstance: java.lang.ref.WeakReference<RexyyBackgroundAssistantService>? = null
+
+        fun getActiveServiceInstanceId(): String? {
+            return activeServiceInstance?.get()?.serviceInstanceId
+        }
     }
+
+    val serviceInstanceId: String by lazy { "Service#${System.identityHashCode(this)}" }
 
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onCreate() {
         super.onCreate()
-        BackgroundListeningDiagnostics.recordServiceCreated()
+        // Duplicate service instance check and prevention (Section 10 Requirement)
+        val existing = activeServiceInstance?.get()
+        if (existing != null && existing != this) {
+            android.util.Log.w("RexyyService", "Duplicate service detected! Stopping stale instance ${existing.serviceInstanceId}")
+            try {
+                existing.stopSelf()
+            } catch (_: Exception) {}
+        }
+        activeServiceInstance = java.lang.ref.WeakReference(this)
+
+        BackgroundListeningDiagnostics.recordServiceCreated(serviceInstanceId)
         createNotificationChannel()
         startForegroundWithMicrophone()
-        BackgroundListeningDiagnostics.recordServiceForeground()
+        BackgroundListeningDiagnostics.recordServiceForeground(serviceInstanceId)
 
         ttsManager = VoiceTtsManager(this) { isSpeaking ->
             if (isSpeaking) {
@@ -122,7 +141,7 @@ class RexyyBackgroundAssistantService : Service(), WakeWordListener {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        BackgroundListeningDiagnostics.recordServiceStarted()
+        BackgroundListeningDiagnostics.recordServiceStarted(serviceInstanceId)
         if (intent?.action == ACTION_STOP_SERVICE) {
             stopSelf()
             return START_NOT_STICKY
@@ -151,8 +170,12 @@ class RexyyBackgroundAssistantService : Service(), WakeWordListener {
         }
 
         if (hasMic) {
-            BackgroundListeningDiagnostics.recordWakeEngineStarted()
-            wakeWordDetector?.startStandby()
+            // Only start standby if not already listening
+            val currentListening = wakeWordDetector?.isListening() ?: false
+            if (!currentListening) {
+                BackgroundListeningDiagnostics.recordWakeEngineStarted()
+                wakeWordDetector?.startStandby()
+            }
         }
 
         // Ensure notification listener service is recovered/rebound if user granted access
@@ -376,7 +399,10 @@ class RexyyBackgroundAssistantService : Service(), WakeWordListener {
     }
 
     override fun onDestroy() {
-        BackgroundListeningDiagnostics.recordServiceDestroyed()
+        BackgroundListeningDiagnostics.recordServiceDestroyed(serviceInstanceId)
+        if (activeServiceInstance?.get() == this) {
+            activeServiceInstance = null
+        }
         isDestroyed = true
         NotificationSpeechCoordinator.unregisterListener(notificationSpeechListener)
         DynamicPillManager.onServiceStopped()

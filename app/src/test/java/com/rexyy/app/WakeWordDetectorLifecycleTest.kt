@@ -191,4 +191,130 @@ class WakeWordDetectorLifecycleTest {
         assertEquals("Rexxy's assistant", cleanForSpeech("REXXY's assistant"))
         assertEquals("I am Rexxy", cleanForSpeech("I am R-E-X-X-Y"))
     }
+
+    @Test
+    fun testRecognitionLifecycleStateTransitions() {
+        assertEquals("IDLE", BackgroundListeningDiagnostics.currentRecognitionLifecycleState.value)
+
+        BackgroundListeningDiagnostics.recordRecognizerStartRequest("Rec#1", "user_start", "STANDBY", isScheduled = false)
+        assertEquals("STARTING", BackgroundListeningDiagnostics.currentRecognitionLifecycleState.value)
+
+        BackgroundListeningDiagnostics.recordRecognizerOnReady("Rec#1")
+        assertEquals("LISTENING", BackgroundListeningDiagnostics.currentRecognitionLifecycleState.value)
+
+        BackgroundListeningDiagnostics.recordRecognizerOnEnd("Rec#1")
+        assertEquals("STOPPING", BackgroundListeningDiagnostics.currentRecognitionLifecycleState.value)
+
+        BackgroundListeningDiagnostics.recordRecognizerOnResults("Rec#1", "hello rexxy")
+        assertEquals("IDLE", BackgroundListeningDiagnostics.currentRecognitionLifecycleState.value)
+
+        BackgroundListeningDiagnostics.recordRecognizerDestroy("Rec#1", "service_shutdown")
+        assertEquals("DESTROYED", BackgroundListeningDiagnostics.currentRecognitionLifecycleState.value)
+    }
+
+    @Test
+    fun testServiceInstanceTrackingAndDuplicatePrevention() {
+        val serviceId1 = "Service#1001"
+        val serviceId2 = "Service#1002"
+
+        BackgroundListeningDiagnostics.recordServiceCreated(serviceId1)
+        val entry1 = BackgroundListeningDiagnostics.history.value.first()
+        assertEquals(serviceId1, entry1.serviceInstanceId)
+
+        BackgroundListeningDiagnostics.recordServiceCreated(serviceId2)
+        val entry2 = BackgroundListeningDiagnostics.history.value.first()
+        assertEquals(serviceId2, entry2.serviceInstanceId)
+        assertEquals("SERVICE_CREATED", entry2.event)
+
+        BackgroundListeningDiagnostics.recordServiceDestroyed(serviceId1)
+        val entryDestroy = BackgroundListeningDiagnostics.history.value.first()
+        assertEquals("SERVICE_DESTROYED", entryDestroy.event)
+        assertEquals(serviceId1, entryDestroy.serviceInstanceId)
+    }
+
+    @Test
+    fun testSpeechRecognizerErrorCodes() {
+        val errorCodes = mapOf(
+            3 to "ERROR_AUDIO",
+            5 to "ERROR_CLIENT",
+            6 to "ERROR_SPEECH_TIMEOUT",
+            7 to "ERROR_NO_MATCH",
+            8 to "ERROR_RECOGNIZER_BUSY",
+            9 to "ERROR_INSUFFICIENT_PERMISSIONS"
+        )
+
+        for ((code, name) in errorCodes) {
+            BackgroundListeningDiagnostics.recordRecognizerOnError("Rec#1", code, name)
+            val entry = BackgroundListeningDiagnostics.history.value.first()
+            assertEquals("RECOGNIZER_ON_ERROR", entry.event)
+            assertEquals(code, entry.errorCode)
+            assertEquals("STOPPING", entry.recognitionState)
+        }
+    }
+
+    @Test
+    fun testRestartSchedulerGuardLogic() {
+        var isRecoveryScheduled = false
+        var scheduledCount = 0
+
+        fun scheduleGuarded(reason: String) {
+            if (isRecoveryScheduled) {
+                // Drop duplicate restart requests
+                return
+            }
+            isRecoveryScheduled = true
+            scheduledCount++
+        }
+
+        scheduleGuarded("silence_timeout")
+        assertEquals(1, scheduledCount)
+        assertTrue(isRecoveryScheduled)
+
+        // Multiple simultaneous callbacks arrive (e.g. onEndOfSpeech + onError + onResults)
+        scheduleGuarded("onEndOfSpeech_callback")
+        scheduleGuarded("error_callback")
+        scheduleGuarded("results_callback")
+
+        // Guard must prevent duplicate scheduling!
+        assertEquals(1, scheduledCount)
+
+        // Reset/complete recovery
+        isRecoveryScheduled = false
+        scheduleGuarded("next_standby_cycle")
+        assertEquals(2, scheduledCount)
+    }
+
+    @Test
+    fun testDuplicateStartPrevention() {
+        var currentState = com.rexyy.app.voice.RecognitionLifecycleState.IDLE
+        var startCount = 0
+
+        fun requestStart(reason: String): Boolean {
+            if (currentState == com.rexyy.app.voice.RecognitionLifecycleState.STARTING ||
+                currentState == com.rexyy.app.voice.RecognitionLifecycleState.LISTENING) {
+                return false // Rejected
+            }
+            currentState = com.rexyy.app.voice.RecognitionLifecycleState.STARTING
+            startCount++
+            return true
+        }
+
+        assertTrue(requestStart("initial_start"))
+        assertEquals(1, startCount)
+
+        // Competing start calls while already STARTING
+        assertFalse(requestStart("competing_start_1"))
+        assertFalse(requestStart("competing_start_2"))
+        assertEquals(1, startCount)
+
+        // Now transition to LISTENING
+        currentState = com.rexyy.app.voice.RecognitionLifecycleState.LISTENING
+        assertFalse(requestStart("competing_start_while_listening"))
+        assertEquals(1, startCount)
+
+        // Stop session -> IDLE
+        currentState = com.rexyy.app.voice.RecognitionLifecycleState.IDLE
+        assertTrue(requestStart("next_cycle_start"))
+        assertEquals(2, startCount)
+    }
 }

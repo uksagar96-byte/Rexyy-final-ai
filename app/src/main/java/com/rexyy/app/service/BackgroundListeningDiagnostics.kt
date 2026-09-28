@@ -11,6 +11,13 @@ data class LifecycleDiagnosticEntry(
     val component: String = "Service",
     val contextType: String = "ServiceContext",
     val state: String = "WAKE_STANDBY",
+    val serviceInstanceId: String? = null,
+    val recognizerInstanceId: String? = null,
+    val recognitionState: String = "IDLE",
+    val reasonStart: String? = null,
+    val reasonStop: String? = null,
+    val errorCode: Int? = null,
+    val isStartScheduled: Boolean = false,
     val detail: String? = null
 )
 
@@ -20,6 +27,9 @@ object BackgroundListeningDiagnostics {
 
     private val _currentListeningState = MutableStateFlow(WakeWordState.WAKE_STANDBY)
     val currentListeningState: StateFlow<WakeWordState> = _currentListeningState.asStateFlow()
+
+    private val _currentRecognitionLifecycleState = MutableStateFlow("IDLE")
+    val currentRecognitionLifecycleState: StateFlow<String> = _currentRecognitionLifecycleState.asStateFlow()
 
     private val _lastRecognizerEvent = MutableStateFlow("NONE")
     val lastRecognizerEvent: StateFlow<String> = _lastRecognizerEvent.asStateFlow()
@@ -47,10 +57,18 @@ object BackgroundListeningDiagnostics {
         state: WakeWordState = _currentListeningState.value,
         detail: String? = null,
         component: String = "Service",
-        contextType: String = "ServiceContext"
+        contextType: String = "ServiceContext",
+        serviceInstanceId: String? = null,
+        recognizerInstanceId: String? = null,
+        recognitionState: String = _currentRecognitionLifecycleState.value,
+        reasonStart: String? = null,
+        reasonStop: String? = null,
+        errorCode: Int? = null,
+        isStartScheduled: Boolean = false
     ) {
         val now = System.currentTimeMillis()
         _currentListeningState.value = state
+        _currentRecognitionLifecycleState.value = recognitionState
         _lastRecognizerEvent.value = event
         val sanitizedDetail = sanitizeForPrivacy(detail)
         val entry = LifecycleDiagnosticEntry(
@@ -59,31 +77,192 @@ object BackgroundListeningDiagnostics {
             component = component,
             contextType = contextType,
             state = state.name,
+            serviceInstanceId = serviceInstanceId,
+            recognizerInstanceId = recognizerInstanceId,
+            recognitionState = recognitionState,
+            reasonStart = reasonStart,
+            reasonStop = reasonStop,
+            errorCode = errorCode,
+            isStartScheduled = isStartScheduled,
             detail = sanitizedDetail
         )
-        _history.value = (listOf(entry) + _history.value).take(100)
+        _history.value = (listOf(entry) + _history.value).take(150)
         try {
-            Log.d(TAG, "[$now] [$event] [$component] [$contextType] [${state.name}] ${sanitizedDetail ?: ""}")
+            Log.d(TAG, "[$now] [$event] [$component] [$contextType] [${state.name}] [RecState: $recognitionState] [Svc: $serviceInstanceId] [Rec: $recognizerInstanceId] ${sanitizedDetail ?: ""}")
         } catch (_: Throwable) {
             // JVM test environment fallback
         }
     }
 
-    // Service Lifecycle Diagnostics
-    fun recordServiceCreated() {
-        logEvent("SERVICE_CREATED", _currentListeningState.value, component = "RexyyBackgroundAssistantService", contextType = "ServiceContext")
+    // Service Lifecycle Diagnostics with Instance Tracking
+    fun recordServiceCreated(serviceInstanceId: String = "ServiceDefault") {
+        logEvent("SERVICE_CREATED", _currentListeningState.value, component = "RexyyBackgroundAssistantService", contextType = "ServiceContext", serviceInstanceId = serviceInstanceId)
     }
 
-    fun recordServiceStarted() {
-        logEvent("SERVICE_STARTED", _currentListeningState.value, component = "RexyyBackgroundAssistantService", contextType = "ServiceContext")
+    fun recordServiceStarted(serviceInstanceId: String = "ServiceDefault") {
+        logEvent("SERVICE_STARTED", _currentListeningState.value, component = "RexyyBackgroundAssistantService", contextType = "ServiceContext", serviceInstanceId = serviceInstanceId)
     }
 
-    fun recordServiceForeground() {
-        logEvent("SERVICE_FOREGROUND", _currentListeningState.value, component = "RexyyBackgroundAssistantService", contextType = "ServiceContext")
+    fun recordServiceForeground(serviceInstanceId: String = "ServiceDefault") {
+        logEvent("SERVICE_FOREGROUND", _currentListeningState.value, component = "RexyyBackgroundAssistantService", contextType = "ServiceContext", serviceInstanceId = serviceInstanceId)
     }
 
-    fun recordServiceDestroyed() {
-        logEvent("SERVICE_DESTROYED", _currentListeningState.value, component = "RexyyBackgroundAssistantService", contextType = "ServiceContext")
+    fun recordServiceDestroyed(serviceInstanceId: String = "ServiceDefault") {
+        logEvent("SERVICE_DESTROYED", _currentListeningState.value, component = "RexyyBackgroundAssistantService", contextType = "ServiceContext", serviceInstanceId = serviceInstanceId)
+    }
+
+    // Granular Recognition Operation Diagnostics (Section 3 Requirement)
+    fun recordRecognizerCreate(recognizerId: String, recognizerType: String) {
+        _activeRecognizersCount.value = 1
+        logEvent(
+            "RECOGNIZER_CREATE",
+            _currentListeningState.value,
+            detail = recognizerType,
+            component = "AndroidWakeWordDetector",
+            contextType = "ServiceContext",
+            recognizerInstanceId = recognizerId,
+            recognitionState = "IDLE"
+        )
+        recordSpeechRecognizerCreated(recognizerType)
+    }
+
+    fun recordRecognizerStartRequest(recognizerId: String, reason: String, mode: String, isScheduled: Boolean) {
+        logEvent(
+            "RECOGNIZER_START_REQUEST",
+            _currentListeningState.value,
+            detail = "Mode: $mode, Reason: $reason",
+            component = "AndroidWakeWordDetector",
+            contextType = "ServiceContext",
+            recognizerInstanceId = recognizerId,
+            recognitionState = "STARTING",
+            reasonStart = reason,
+            isStartScheduled = isScheduled
+        )
+    }
+
+    fun recordRecognizerStartAccepted(recognizerId: String, reason: String, mode: String) {
+        logEvent(
+            "RECOGNIZER_START_ACCEPTED",
+            _currentListeningState.value,
+            detail = "Mode: $mode, Reason: $reason",
+            component = "AndroidWakeWordDetector",
+            contextType = "ServiceContext",
+            recognizerInstanceId = recognizerId,
+            recognitionState = "STARTING",
+            reasonStart = reason
+        )
+    }
+
+    fun recordRecognizerStop(recognizerId: String, reason: String) {
+        logEvent(
+            "RECOGNIZER_STOP",
+            _currentListeningState.value,
+            detail = "Reason: $reason",
+            component = "AndroidWakeWordDetector",
+            contextType = "ServiceContext",
+            recognizerInstanceId = recognizerId,
+            recognitionState = "STOPPING",
+            reasonStop = reason
+        )
+    }
+
+    fun recordRecognizerCancel(recognizerId: String, reason: String) {
+        logEvent(
+            "RECOGNIZER_CANCEL",
+            _currentListeningState.value,
+            detail = "Reason: $reason",
+            component = "AndroidWakeWordDetector",
+            contextType = "ServiceContext",
+            recognizerInstanceId = recognizerId,
+            recognitionState = "STOPPING",
+            reasonStop = reason
+        )
+    }
+
+    fun recordRecognizerDestroy(recognizerId: String, reason: String) {
+        _activeRecognizersCount.value = 0
+        logEvent(
+            "RECOGNIZER_DESTROY",
+            _currentListeningState.value,
+            detail = "Reason: $reason",
+            component = "AndroidWakeWordDetector",
+            contextType = "ServiceContext",
+            recognizerInstanceId = recognizerId,
+            recognitionState = "DESTROYED",
+            reasonStop = reason
+        )
+    }
+
+    fun recordRecognizerOnReady(recognizerId: String) {
+        logEvent(
+            "RECOGNIZER_ON_READY",
+            _currentListeningState.value,
+            component = "AndroidWakeWordDetector",
+            contextType = "ServiceContext",
+            recognizerInstanceId = recognizerId,
+            recognitionState = "LISTENING"
+        )
+    }
+
+    fun recordRecognizerOnBeginning(recognizerId: String) {
+        logEvent(
+            "RECOGNIZER_ON_BEGINNING",
+            _currentListeningState.value,
+            component = "AndroidWakeWordDetector",
+            contextType = "ServiceContext",
+            recognizerInstanceId = recognizerId,
+            recognitionState = "LISTENING"
+        )
+    }
+
+    fun recordRecognizerOnEnd(recognizerId: String) {
+        logEvent(
+            "RECOGNIZER_ON_END",
+            _currentListeningState.value,
+            component = "AndroidWakeWordDetector",
+            contextType = "ServiceContext",
+            recognizerInstanceId = recognizerId,
+            recognitionState = "STOPPING",
+            reasonStop = "EndOfSpeech"
+        )
+    }
+
+    fun recordRecognizerOnResults(recognizerId: String, resultSummary: String) {
+        logEvent(
+            "RECOGNIZER_ON_RESULTS",
+            _currentListeningState.value,
+            detail = sanitizeForPrivacy(resultSummary),
+            component = "AndroidWakeWordDetector",
+            contextType = "ServiceContext",
+            recognizerInstanceId = recognizerId,
+            recognitionState = "IDLE"
+        )
+    }
+
+    fun recordRecognizerOnPartial(recognizerId: String, partial: String) {
+        logEvent(
+            "RECOGNIZER_ON_PARTIAL",
+            _currentListeningState.value,
+            detail = sanitizeForPrivacy(partial),
+            component = "AndroidWakeWordDetector",
+            contextType = "ServiceContext",
+            recognizerInstanceId = recognizerId,
+            recognitionState = "LISTENING"
+        )
+    }
+
+    fun recordRecognizerOnError(recognizerId: String, errorCode: Int, errorMsg: String) {
+        logEvent(
+            "RECOGNIZER_ON_ERROR",
+            _currentListeningState.value,
+            detail = "Code $errorCode: $errorMsg",
+            component = "AndroidWakeWordDetector",
+            contextType = "ServiceContext",
+            recognizerInstanceId = recognizerId,
+            recognitionState = "STOPPING",
+            errorCode = errorCode,
+            reasonStop = errorMsg
+        )
     }
 
     // Wake Engine Lifecycle Diagnostics
