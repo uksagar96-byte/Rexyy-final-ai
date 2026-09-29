@@ -37,12 +37,12 @@ class RexyyBootReceiver : BroadcastReceiver() {
                 Log.w(TAG, "Failed to rebind NotificationListenerService on boot: ${e.message}")
             }
 
-            // 3. Resume background assistant if activated by user
+            // 3. Resume background assistant if activated by user or Always Ready is enabled
             try {
                 val storage = SecureStorage(context)
-                if (storage.isRexyyActivated() && BackgroundAssistantManager.canStartService(context)) {
+                if ((storage.isAlwaysReadyEnabled() || storage.isRexyyActivated()) && BackgroundAssistantManager.canStartService(context)) {
                     Log.i(TAG, "Resuming RexyyBackgroundAssistantService on boot...")
-                    BackgroundAssistantManager.startAssistant(context)
+                    BackgroundAssistantManager.startAlwaysReady(context)
                 }
             } catch (e: Exception) {
                 Log.w(TAG, "Failed to start background assistant on boot: ${e.message}")

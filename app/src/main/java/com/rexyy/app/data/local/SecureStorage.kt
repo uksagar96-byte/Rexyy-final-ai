@@ -13,7 +13,7 @@ import javax.crypto.KeyGenerator
 import javax.crypto.SecretKey
 import javax.crypto.spec.GCMParameterSpec
 
-class SecureStorage(
+class SecureStorage @JvmOverloads constructor(
     context: Context,
     var includeBuildConfigKeys: Boolean = true
 ) {
@@ -52,6 +52,7 @@ class SecureStorage(
         private const val KEY_CUSTOM_INSTRUCTIONS = "custom_instructions"
 
         private const val KEY_REXYY_ACTIVATED = "rexyy_activated"
+        private const val KEY_ALWAYS_READY = "always_ready_enabled"
         private const val KEY_NOTIFICATION_ANNOUNCEMENT = "notification_announcement_enabled"
         private const val KEY_CHARGING_ANNOUNCEMENT = "charging_announcement_enabled"
 
@@ -423,6 +424,14 @@ class SecureStorage(
 
     fun setRexyyActivated(activated: Boolean) {
         prefs.edit().putBoolean(KEY_REXYY_ACTIVATED, activated).apply()
+    }
+
+    fun isAlwaysReadyEnabled(): Boolean {
+        return prefs.getBoolean(KEY_ALWAYS_READY, false)
+    }
+
+    fun setAlwaysReadyEnabled(enabled: Boolean) {
+        prefs.edit().putBoolean(KEY_ALWAYS_READY, enabled).apply()
     }
 
     fun isNotificationAnnouncementEnabled(): Boolean {

@@ -32,10 +32,12 @@ public class RexyyUiCoordinator {
         this.activeActivityRef = new WeakReference<>(activity);
         RexyyStatusBarHelper.applyDarkSystemBars(activity);
 
-        // Auto-start background assistant service if permission is granted
-        if (coreController.getPermissionController().hasRecordAudioPermission(activity) &&
+        // Auto-start background assistant service if Always Ready is enabled and permission is granted
+        com.rexyy.app.data.local.SecureStorage storage = new com.rexyy.app.data.local.SecureStorage(activity);
+        if (storage.isAlwaysReadyEnabled() &&
+                coreController.getPermissionController().hasRecordAudioPermission(activity) &&
                 !coreController.isAssistantRunning()) {
-            coreController.startAssistant(activity);
+            com.rexyy.app.service.BackgroundAssistantManager.INSTANCE.startAlwaysReady(activity);
         }
     }
 
@@ -48,10 +50,12 @@ public class RexyyUiCoordinator {
         // While REXXY is in the foreground, hide system window overlay to avoid double pill
         coreController.dismissOverlay();
 
-        // Ensure background assistant service is active while in foreground
-        if (coreController.getPermissionController().hasRecordAudioPermission(activity) &&
+        // Ensure background assistant service is active if Always Ready is enabled
+        com.rexyy.app.data.local.SecureStorage storage = new com.rexyy.app.data.local.SecureStorage(activity);
+        if (storage.isAlwaysReadyEnabled() &&
+                coreController.getPermissionController().hasRecordAudioPermission(activity) &&
                 !coreController.isAssistantRunning()) {
-            coreController.startAssistant(activity);
+            com.rexyy.app.service.BackgroundAssistantManager.INSTANCE.startAlwaysReady(activity);
         }
     }
 
@@ -60,9 +64,11 @@ public class RexyyUiCoordinator {
      */
     public void onActivityResume(Activity activity) {
         this.activeActivityRef = new WeakReference<>(activity);
-        if (coreController.getPermissionController().hasRecordAudioPermission(activity) &&
+        com.rexyy.app.data.local.SecureStorage storage = new com.rexyy.app.data.local.SecureStorage(activity);
+        if (storage.isAlwaysReadyEnabled() &&
+                coreController.getPermissionController().hasRecordAudioPermission(activity) &&
                 !coreController.isAssistantRunning()) {
-            coreController.startAssistant(activity);
+            com.rexyy.app.service.BackgroundAssistantManager.INSTANCE.startAlwaysReady(activity);
         }
     }
 

@@ -547,6 +547,17 @@ class AndroidWakeWordDetector(
                         wakeAlreadyTriggered = true
                         cancelListeningInternal("wake_detected_in_partial")
                         triggerWakeDetected(partial, matchResult)
+                    } else {
+                        val directCmd = com.rexyy.app.router.RexyyCommandRouter.route(partial)
+                        if (directCmd !is com.rexyy.app.voice.VoiceCommand.AiChat) {
+                            cancelGuardedRecovery("actionable_command_in_partial")
+                            wakeAlreadyTriggered = true
+                            cancelListeningInternal("actionable_command_in_partial")
+                            consecutiveErrors = 0
+                            BackgroundListeningDiagnostics.recordWakeDetected("DIRECT_COMMAND")
+                            transitionState(WakeWordState.COMMAND_RECOGNIZED)
+                            listener?.onCommandRecognized(partial)
+                        }
                     }
                 }
             }
@@ -588,6 +599,26 @@ class AndroidWakeWordDetector(
             cancelListeningInternal("wake_detected_in_results")
             triggerWakeDetected(detectedRaw, detectedMatch)
         } else {
+            var actionableCommand: String? = null
+            for (candidate in candidates) {
+                val directCmd = com.rexyy.app.router.RexyyCommandRouter.route(candidate)
+                if (directCmd !is com.rexyy.app.voice.VoiceCommand.AiChat) {
+                    actionableCommand = candidate
+                    break
+                }
+            }
+
+            if (actionableCommand != null) {
+                cancelGuardedRecovery("actionable_command_in_results")
+                cancelListeningInternal("actionable_command_in_results")
+                wakeAlreadyTriggered = true
+                consecutiveErrors = 0
+                BackgroundListeningDiagnostics.recordWakeDetected("DIRECT_COMMAND")
+                transitionState(WakeWordState.COMMAND_RECOGNIZED)
+                listener?.onCommandRecognized(actionableCommand)
+                return
+            }
+
             scheduleGuardedRecovery(STANDBY_CYCLE_DELAY_MS, "standby_no_wake_match")
         }
     }

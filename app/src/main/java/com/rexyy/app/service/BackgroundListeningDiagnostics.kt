@@ -463,6 +463,45 @@ object BackgroundListeningDiagnostics {
         logEvent("RETURNING_TO_STANDBY", WakeWordState.RETURNING_TO_STANDBY, component = "AndroidWakeWordDetector", contextType = "ServiceContext")
     }
 
+    enum class ActivationSource {
+        NONE,
+        MANUAL,
+        ALWAYS_READY
+    }
+
+    private val _lastActivationSource = MutableStateFlow(ActivationSource.NONE)
+    val lastActivationSource: StateFlow<ActivationSource> = _lastActivationSource.asStateFlow()
+
+    fun recordManualActivationRequested() {
+        _lastActivationSource.value = ActivationSource.MANUAL
+        logEvent("MANUAL_ACTIVATION_REQUESTED", _currentListeningState.value, component = "RexyyCoreTap", contextType = "UIContext", detail = "User tapped REXXY core/animation")
+    }
+
+    fun recordManualActivationStarted() {
+        logEvent("MANUAL_ACTIVATION_STARTED", _currentListeningState.value, component = "BackgroundAssistantManager", contextType = "ServiceContext", detail = "Starting assistant via manual path")
+    }
+
+    fun recordManualMicReady() {
+        logEvent("MANUAL_MIC_READY", _currentListeningState.value, component = "AndroidWakeWordDetector", contextType = "ServiceContext", detail = "Microphone ready from manual activation")
+    }
+
+    fun recordAlwaysReadyEnabled(enabled: Boolean) {
+        logEvent("ALWAYS_READY_ENABLED", _currentListeningState.value, component = "SettingsScreen", contextType = "UIContext", detail = "enabled=$enabled")
+    }
+
+    fun recordAlwaysReadyActivationRequested() {
+        _lastActivationSource.value = ActivationSource.ALWAYS_READY
+        logEvent("ALWAYS_READY_ACTIVATION_REQUESTED", _currentListeningState.value, component = "AlwaysReadyController", contextType = "BackgroundContext", detail = "Always Ready auto-activation requested")
+    }
+
+    fun recordAlwaysReadyActivationStarted() {
+        logEvent("ALWAYS_READY_ACTIVATION_STARTED", _currentListeningState.value, component = "BackgroundAssistantManager", contextType = "ServiceContext", detail = "Always Ready starting existing voice engine")
+    }
+
+    fun recordAlwaysReadyMicReady() {
+        logEvent("ALWAYS_READY_MIC_READY", _currentListeningState.value, component = "AndroidWakeWordDetector", contextType = "ServiceContext", detail = "Microphone ready under Always Ready")
+    }
+
     fun reset() {
         _currentListeningState.value = WakeWordState.WAKE_STANDBY
         _lastRecognizerEvent.value = "NONE"

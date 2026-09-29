@@ -103,7 +103,14 @@ fun RexyyMainScreen(
             is Screen.MainAssistant -> {
                 MainAssistantScreen(
                     uiState = uiState,
-                    onStartListening = { viewModel.startVoiceInput() },
+                    onStartListening = {
+                        if (BackgroundAssistantManager.canStartService(context)) {
+                            BackgroundAssistantManager.startManual(context)
+                        } else {
+                            com.rexyy.app.service.BackgroundListeningDiagnostics.recordManualActivationRequested()
+                        }
+                        viewModel.startVoiceInput()
+                    },
                     onStopListening = { viewModel.cancelVoiceInput() },
                     onQuickCommand = { command -> viewModel.executeLocalAction(command, isVoice = false) },
                     onOpenChat = { currentScreen = Screen.Chat },

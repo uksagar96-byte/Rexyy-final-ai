@@ -156,6 +156,13 @@ class RexyyBackgroundAssistantService : Service(), WakeWordListener {
         startForegroundWithMicrophone()
         RexyyAssistantServiceState.updateRunning(true)
 
+        val source = intent?.getStringExtra("EXTRA_ACTIVATION_SOURCE")
+        if (source == "MANUAL") {
+            BackgroundListeningDiagnostics.recordManualActivationStarted()
+        } else if (source == "ALWAYS_READY") {
+            BackgroundListeningDiagnostics.recordAlwaysReadyActivationStarted()
+        }
+
         val hasMic = androidx.core.content.ContextCompat.checkSelfPermission(
             this,
             android.Manifest.permission.RECORD_AUDIO
@@ -318,6 +325,12 @@ class RexyyBackgroundAssistantService : Service(), WakeWordListener {
         if (!isDestroyed && RexyyAssistantServiceState.serviceRunning.value &&
             RexyyAssistantServiceState.currentState.value == WakeWordState.WAKE_STANDBY) {
             BackgroundListeningDiagnostics.recordMicActive()
+            val source = BackgroundListeningDiagnostics.lastActivationSource.value
+            if (source == BackgroundListeningDiagnostics.ActivationSource.MANUAL) {
+                BackgroundListeningDiagnostics.recordManualMicReady()
+            } else if (source == BackgroundListeningDiagnostics.ActivationSource.ALWAYS_READY) {
+                BackgroundListeningDiagnostics.recordAlwaysReadyMicReady()
+            }
             DynamicPillManager.postWakeStandby()
             updateNotification("REXYY Active", "Listening for \"Hello REXXY\"...")
         }

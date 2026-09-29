@@ -21,10 +21,16 @@ object BackgroundAssistantManager {
         ) == PackageManager.PERMISSION_GRANTED
     }
 
-    fun startAssistant(context: Context): Boolean {
+    fun startAssistant(context: Context, source: String = "AUTO"): Boolean {
+        if (source == "MANUAL") {
+            BackgroundListeningDiagnostics.recordManualActivationStarted()
+        } else if (source == "ALWAYS_READY") {
+            BackgroundListeningDiagnostics.recordAlwaysReadyActivationStarted()
+        }
         return try {
             val intent = Intent(context, RexyyBackgroundAssistantService::class.java).apply {
                 action = RexyyBackgroundAssistantService.ACTION_START_SERVICE
+                putExtra("EXTRA_ACTIVATION_SOURCE", source)
             }
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                 context.startForegroundService(intent)
@@ -35,6 +41,16 @@ object BackgroundAssistantManager {
         } catch (e: Exception) {
             false
         }
+    }
+
+    fun startManual(context: Context): Boolean {
+        BackgroundListeningDiagnostics.recordManualActivationRequested()
+        return startAssistant(context, "MANUAL")
+    }
+
+    fun startAlwaysReady(context: Context): Boolean {
+        BackgroundListeningDiagnostics.recordAlwaysReadyActivationRequested()
+        return startAssistant(context, "ALWAYS_READY")
     }
 
     fun stopAssistant(context: Context) {

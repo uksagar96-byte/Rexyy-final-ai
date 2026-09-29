@@ -715,6 +715,8 @@ fun SettingsScreen(
                     Spacer(modifier = Modifier.height(16.dp))
 
                     // Always Ready (Background Assistant) Toggle
+                    val storage = remember { SecureStorage(context) }
+                    var alwaysReadyState by remember { mutableStateOf(storage.isAlwaysReadyEnabled()) }
                     val isBgRunning by RexyyAssistantServiceState.serviceRunning.collectAsState()
                     Row(
                         verticalAlignment = Alignment.CenterVertically,
@@ -737,9 +739,18 @@ fun SettingsScreen(
                         }
                         Spacer(modifier = Modifier.width(12.dp))
                         Switch(
-                            checked = isBgRunning,
-                            onCheckedChange = { _ ->
-                                BackgroundAssistantManager.toggleAssistant(context)
+                            checked = alwaysReadyState,
+                            onCheckedChange = { enabled ->
+                                alwaysReadyState = enabled
+                                storage.setAlwaysReadyEnabled(enabled)
+                                com.rexyy.app.service.BackgroundListeningDiagnostics.recordAlwaysReadyEnabled(enabled)
+                                if (enabled) {
+                                    if (BackgroundAssistantManager.canStartService(context)) {
+                                        BackgroundAssistantManager.startAlwaysReady(context)
+                                    }
+                                } else {
+                                    BackgroundAssistantManager.stopAssistant(context)
+                                }
                             },
                             colors = SwitchDefaults.colors(
                                 checkedThumbColor = RexyyDarkBackground,
